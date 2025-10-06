@@ -745,4 +745,221 @@ export const createNetworkApplianceVlan = async (apiKey: string, networkId: stri
     return await fetchWithMerakiApi(apiKey, endpoint, 'POST', vlan, signal);
 };
 
-export const updateNetworkApplianceVlan = async (apiKey: string, networkId: string, vlanId: string, vlan: Partial<ApplianceVlan>, signal?:
+export const updateNetworkApplianceVlan = async (apiKey: string, networkId: string, vlanId: string, vlan: Partial<ApplianceVlan>, signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating appliance VLAN ${vlanId} in network ${networkId}`);
+    const endpoint = `/networks/${networkId}/appliance/vlans/${vlanId}`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'PUT', vlan, signal);
+};
+
+export const getOrgVpnStatuses = async (
+    apiKey: string,
+    orgId: string,
+    signal?: AbortSignal
+): Promise<MerakiVpnStatus[]> => {
+    console.log(`Fetching VPN statuses for organization ${orgId}`);
+    const endpoint = `/organizations/${orgId}/appliance/vpn/statuses`;
+    const data = await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+    return data || [];
+};
+
+// --- New Operations, Health, and Maintenance Functions ---
+
+export const getDeviceUplink = async (apiKey: string, serial: string, signal?: AbortSignal): Promise<DeviceUplink[]> => {
+    console.log(`Fetching uplink status for device ${serial}`);
+    const endpoint = `/devices/${serial}/uplink`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const getOrgUplinksLossAndLatency = async (apiKey: string, orgId: string, ip: string, timespan?: number, signal?: AbortSignal): Promise<UplinksLossAndLatency[]> => {
+    console.log(`Fetching uplink loss and latency for org ${orgId}`);
+    let endpoint = `/organizations/${orgId}/devices/uplinksLossAndLatency?ip=${ip}`;
+    if (timespan) endpoint += `&timespan=${timespan}`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const rebootDevice = async (apiKey: string, serial: string, signal?: AbortSignal): Promise<any> => {
+    console.log(`Rebooting device ${serial}`);
+    const endpoint = `/devices/${serial}/reboot`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'POST', {}, signal);
+};
+
+export const blinkDeviceLeds = async (apiKey: string, serial: string, duration: number, signal?: AbortSignal): Promise<any> => {
+    console.log(`Blinking LEDs for device ${serial}`);
+    const endpoint = `/devices/${serial}/blinkLeds`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'POST', { duration }, signal);
+};
+
+export const getNetworkFirmwareUpgrades = async (apiKey: string, networkId: string, signal?: AbortSignal): Promise<FirmwareUpgrade> => {
+    console.log(`Fetching firmware upgrades for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/firmwareUpgrades`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const updateNetworkFirmwareUpgrades = async (apiKey: string, networkId: string, payload: FirmwareUpgrade, signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating firmware upgrades for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/firmwareUpgrades`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'PUT', payload, signal);
+};
+
+export const getNetworkAlertSettings = async (apiKey: string, networkId: string, signal?: AbortSignal): Promise<AlertSettings> => {
+    console.log(`Fetching alert settings for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/alerts/settings`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const updateNetworkAlertSettings = async (apiKey: string, networkId: string, settings: AlertSettings, signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating alert settings for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/alerts/settings`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'PUT', settings, signal);
+};
+
+export const getOrgHttpServers = async (apiKey: string, orgId: string, signal?: AbortSignal): Promise<HttpServer[]> => {
+    console.log(`Fetching HTTP servers for org ${orgId}`);
+    const endpoint = `/organizations/${orgId}/webhooks/httpServers`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const getNetworkSyslogServers = async (apiKey: string, networkId: string, signal?: AbortSignal): Promise<{ servers: SyslogServer[] }> => {
+    console.log(`Fetching syslog servers for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/syslogServers`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const updateNetworkSyslogServers = async (apiKey: string, networkId: string, servers: SyslogServer[], signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating syslog servers for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/syslogServers`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'PUT', { servers }, signal);
+};
+
+export const getOrgSnmpSettings = async (apiKey: string, orgId: string, signal?: AbortSignal): Promise<SnmpSettings> => {
+    console.log(`Fetching SNMP settings for org ${orgId}`);
+    const endpoint = `/organizations/${orgId}/snmp`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const updateOrgSnmpSettings = async (apiKey: string, orgId: string, settings: SnmpSettings, signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating SNMP settings for org ${orgId}`);
+    const endpoint = `/organizations/${orgId}/snmp`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'PUT', settings, signal);
+};
+
+// --- New Templates and Scale Functions ---
+
+export const getOrgConfigTemplates = async (apiKey: string, orgId: string, signal?: AbortSignal): Promise<ConfigTemplate[]> => {
+    console.log(`Fetching config templates for org ${orgId}`);
+    const endpoint = `/organizations/${orgId}/configTemplates`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const bindNetworkToTemplate = async (apiKey: string, networkId: string, payload: BindNetworkPayload, signal?: AbortSignal): Promise<any> => {
+    console.log(`Binding network ${networkId} to template ${payload.configTemplateId}`);
+    const endpoint = `/networks/${networkId}/bind`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'POST', payload, signal);
+};
+
+// --- New Security and Access Functions ---
+export const getOrgAdmins = async (apiKey: string, orgId: string, signal?: AbortSignal): Promise<OrganizationAdmin[]> => {
+    console.log(`Fetching admins for org ${orgId}`);
+    return await fetchWithMerakiApi(apiKey, `/organizations/${orgId}/admins`, 'GET', null, signal);
+};
+
+export const createOrgAdmin = async (apiKey: string, orgId: string, admin: OrganizationAdmin, signal?: AbortSignal): Promise<any> => {
+    console.log(`Creating admin in org ${orgId}`);
+    return await fetchWithMerakiApi(apiKey, `/organizations/${orgId}/admins`, 'POST', admin, signal);
+};
+
+export const updateOrgAdmin = async (apiKey: string, orgId: string, adminId: string, admin: Partial<OrganizationAdmin>, signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating admin ${adminId} in org ${orgId}`);
+    return await fetchWithMerakiApi(apiKey, `/organizations/${orgId}/admins/${adminId}`, 'PUT', admin, signal);
+};
+
+export const deleteOrgAdmin = async (apiKey: string, orgId: string, adminId: string, signal?: AbortSignal): Promise<any> => {
+    console.log(`Deleting admin ${adminId} from org ${orgId}`);
+    return await fetchWithMerakiApi(apiKey, `/organizations/${orgId}/admins/${adminId}`, 'DELETE', null, signal);
+};
+
+
+// --- New Camera (MV) and Sensor (MT) Functions ---
+export const generateCameraSnapshot = async (apiKey: string, serial: string, timestamp?: string, signal?: AbortSignal): Promise<CameraSnapshot> => {
+    console.log(`Generating snapshot for camera ${serial}`);
+    const body = timestamp ? { timestamp } : {};
+    return await fetchWithMerakiApi(apiKey, `/devices/${serial}/camera/generateSnapshot`, 'POST', body, signal);
+};
+
+export const getCameraMotionAnalytics = async (apiKey: string, serial: string, timespan: number, signal?: AbortSignal): Promise<MotionAnalytics[]> => {
+    console.log(`Fetching motion analytics for camera ${serial}`);
+    return await fetchWithMerakiApi(apiKey, `/devices/${serial}/camera/analytics/motion?timespan=${timespan}`, 'GET', null, signal);
+};
+
+export const getSensorAlerts = async (apiKey: string, serial: string, signal?: AbortSignal): Promise<SensorAlertProfile[]> => {
+    console.log(`Fetching sensor alerts for device ${serial}`);
+    return await fetchWithMerakiApi(apiKey, `/devices/${serial}/sensor/alerts`, 'GET', null, signal);
+};
+
+export const updateSensorAlerts = async (apiKey: string, serial: string, profiles: SensorAlertProfile[], signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating sensor alerts for device ${serial}`);
+    return await fetchWithMerakiApi(apiKey, `/devices/${serial}/sensor/alerts`, 'PUT', { profiles }, signal);
+};
+
+
+// --- New WAN/Cellular (MG) Functions ---
+export const getCellularStatus = async (apiKey: string, serial: string, signal?: AbortSignal): Promise<CellularStatus> => {
+    console.log(`Fetching cellular status for MG ${serial}`);
+    return await fetchWithMerakiApi(apiKey, `/devices/${serial}/cellular/status`, 'GET', null, signal);
+};
+
+export const getCellularUsageHistory = async (apiKey: string, serial: string, timespan: number, signal?: AbortSignal): Promise<CellularUsageHistory[]> => {
+    console.log(`Fetching cellular usage for MG ${serial}`);
+    return await fetchWithMerakiApi(apiKey, `/devices/${serial}/cellular/usageHistory?timespan=${timespan}`, 'GET', null, signal);
+};
+
+export const getApplianceUplinkSettings = async (apiKey: string, networkId: string, signal?: AbortSignal): Promise<ApplianceUplinkSettings> => {
+    console.log(`Fetching uplink settings for network ${networkId}`);
+    return await fetchWithMerakiApi(apiKey, `/networks/${networkId}/appliance/uplinks/settings`, 'GET', null, signal);
+};
+
+export const updateApplianceUplinkSettings = async (apiKey: string, networkId: string, settings: ApplianceUplinkSettings, signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating uplink settings for network ${networkId}`);
+    return await fetchWithMerakiApi(apiKey, `/networks/${networkId}/appliance/uplinks/settings`, 'PUT', settings, signal);
+};
+
+
+// --- New Advanced Analytics and Reporting Functions ---
+export const getNetworkTraffic = async (apiKey: string, networkId: string, timespan: number, signal?: AbortSignal): Promise<NetworkTraffic[]> => {
+    console.log(`Fetching network traffic for network ${networkId}`);
+    return await fetchWithMerakiApi(apiKey, `/networks/${networkId}/traffic?timespan=${timespan}`, 'GET', null, signal);
+};
+
+export const getOrgAuditLogs = async (apiKey: string, orgId: string, timespan: number, signal?: AbortSignal): Promise<AuditLogEntry[]> => {
+    console.log(`Fetching audit logs for org ${orgId}`);
+    return await fetchWithMerakiApi(apiKey, `/organizations/${orgId}/auditLog?timespan=${timespan}`, 'GET', null, signal);
+};
+
+
+// --- New Location and Maps Functions ---
+export const getNetworkFloorPlans = async (apiKey: string, networkId: string, signal?: AbortSignal): Promise<FloorPlan[]> => {
+    console.log(`Fetching floor plans for network ${networkId}`);
+    return await fetchWithMerakiApi(apiKey, `/networks/${networkId}/floorPlans`, 'GET', null, signal);
+};
+
+export const getWirelessBluetoothSettings = async (apiKey: string, serial: string, signal?: AbortSignal): Promise<WirelessBluetoothSettings> => {
+    console.log(`Fetching bluetooth settings for device ${serial}`);
+    return await fetchWithMerakiApi(apiKey, `/devices/${serial}/wireless/bluetooth/settings`, 'GET', null, signal);
+};
+
+export const updateWirelessBluetoothSettings = async (apiKey: string, serial: string, settings: WirelessBluetoothSettings, signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating bluetooth settings for device ${serial}`);
+    return await fetchWithMerakiApi(apiKey, `/devices/${serial}/wireless/bluetooth/settings`, 'PUT', settings, signal);
+};
+
+
+// --- New Licensing and Compliance Functions ---
+export const getOrgLicenses = async (apiKey: string, orgId: string, signal?: AbortSignal): Promise<License[]> => {
+    console.log(`Fetching licenses for org ${orgId}`);
+    return await fetchWithMerakiApi(apiKey, `/organizations/${orgId}/licenses`, 'GET', null, signal);
+};
+
+export const getOrgLicenseOverview = async (apiKey: string, orgId: string, signal?: AbortSignal): Promise<LicenseOverview> => {
+    console.log(`Fetching license overview for org ${orgId}`);
+    return await fetchWithMerakiApi(apiKey, `/organizations/${orgId}/licenses/overview`, 'GET', null, signal);
+};
