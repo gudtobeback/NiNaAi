@@ -11,6 +11,8 @@ interface HeaderProps {
     onOpenHelp: () => void;
     onOpenMaturity: () => void;
     onLogout: () => void;
+    isDevicePanelOpen: boolean;
+    onToggleDevicePanel: () => void;
 }
 
 const HeaderButton: React.FC<{onClick: () => void, 'aria-label': string, children: React.ReactNode}> = ({ onClick, 'aria-label': ariaLabel, children }) => (
@@ -23,7 +25,7 @@ const HeaderButton: React.FC<{onClick: () => void, 'aria-label': string, childre
     </button>
 );
 
-const Header: React.FC<HeaderProps> = ({ user, networks, activeNetworkId, onNetworkSelect, onOpenSettings, onOpenHelp, onOpenMaturity, onLogout }) => {
+const Header: React.FC<HeaderProps> = ({ user, networks, activeNetworkId, onNetworkSelect, onOpenSettings, onOpenHelp, onOpenMaturity, onLogout, isDevicePanelOpen, onToggleDevicePanel }) => {
   return (
     <header className="bg-[var(--color-surface)] p-2.5 rounded-[var(--radius-lg)] shadow-md z-10 w-full max-w-7xl mx-auto animate-fade-slide-up border border-[var(--color-border-primary)]">
       <div className="flex items-center justify-between">
@@ -55,6 +57,22 @@ const Header: React.FC<HeaderProps> = ({ user, networks, activeNetworkId, onNetw
                   <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-1.57 1.996A1.532 1.532 0 013.17 8.51c-1.56.38-1.56 2.6 0 2.98a1.532 1.532 0 01.948 2.286c-.836 1.372.734 2.942 1.996 1.57a1.532 1.532 0 012.286.948c.38 1.56 2.6 1.56 2.98 0a1.532 1.532 0 012.286-.948c1.372.836 2.942-.734 1.57-1.996A1.532 1.532 0 0116.83 11.49c1.56-.38 1.56-2.6 0-2.98a1.532 1.532 0 01-.948-2.286c.836-1.372-.734-2.942-1.996-1.57A1.532 1.532 0 0111.49 3.17zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
                 </svg>
             </HeaderButton>
+
+            <div className="hidden md:block border-l border-[var(--color-border-primary)] ml-2 pl-2">
+                <HeaderButton onClick={onToggleDevicePanel} aria-label={isDevicePanelOpen ? "Close device panel" : "Open device panel"}>
+                    {isDevicePanelOpen ? (
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M10.293 15.707a1 1 0 010-1.414L14.586 10l-4.293-4.293a1 1 0 111.414-1.414l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                            <path fillRule="evenodd" d="M4.293 15.707a1 1 0 010-1.414L8.586 10 4.293 5.707a1 1 0 011.414-1.414l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                        </svg>
+                    ) : (
+                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M15.707 15.707a1 1 0 01-1.414 0l-5-5a1 1 0 010-1.414l5-5a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 010 1.414zm-6 0a1 1 0 01-1.414 0l-5-5a1 1 0 010-1.414l5-5a1 1 0 011.414 1.414L5.414 10l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" />
+                        </svg>
+                    )}
+                </HeaderButton>
+            </div>
+
             <div className="flex items-center space-x-2 text-sm pl-2">
                 <span className="font-medium text-[var(--color-text-primary)] hidden md:inline">{user.username}</span>
                 <button onClick={onLogout} aria-label="Logout" className="p-2.5 text-[var(--color-text-secondary)] hover:text-red-500 rounded-[var(--radius-md)] hover:bg-red-500/10 transition-colors duration-200">

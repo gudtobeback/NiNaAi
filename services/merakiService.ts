@@ -1,4 +1,4 @@
-import { MerakiDevice, MerakiEvent, MerakiConfigChange, MerakiDeviceDetails, MerakiSwitchPortStats, MerakiNetwork, MerakiVpnStatus, MerakiFirewallRule } from '../types';
+import { MerakiDevice, MerakiEvent, MerakiConfigChange, MerakiDeviceDetails, MerakiSwitchPortStats, MerakiNetwork, MerakiVpnStatus, MerakiL3FirewallRule, MerakiOrganization, MerakiClient, SwitchPortSettings, MerakiAction, MerakiStpSettings, WirelessSsid, ClientProvisionPayload, MerakiL7FirewallRule, ContentFilteringSettings, TrafficShapingRule, SiteToSiteVpnSettings, ApplianceVlan, DeviceWirelessRadioSettings, DeviceUplink, UplinksLossAndLatency, FirmwareUpgrade, AlertSettings, HttpServer, SyslogServer, SnmpSettings, ConfigTemplate, BindNetworkPayload, OrganizationAdmin, CameraSnapshot, MotionAnalytics, SensorAlertProfile, CellularStatus, CellularUsageHistory, ApplianceUplinkSettings, NetworkTraffic, AuditLogEntry, FloorPlan, WirelessBluetoothSettings, License, LicenseOverview } from '../types';
 
 const MERAKI_BASE_URL = 'https://api.meraki.com/api/v1';
 const WEBEX_BASE_URL = 'https://webexapis.com/v1';
@@ -30,32 +30,36 @@ const fetchWithWebexApi = async (
   const fullUrl = `${PROXY_URL}${WEBEX_BASE_URL}${endpoint}`;
   
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      try {
-          const response = await fetch(fullUrl, options);
-          
-          if (response.status === 429) {
-              throw new Error("Too Many Requests"); // Standardize error for retry logic
-          }
+      const response = await fetch(fullUrl, options);
 
-          if (!response.ok) {
-              const errorData = await response.json().catch(() => ({ message: response.statusText }));
-              const errorMessages = errorData.message ? errorData.message : `HTTP error! status: ${response.status}`;
-              if (response.status === 401) throw new Error("Invalid Bot Token.");
-              if (response.status === 404 && endpoint.startsWith('/messages')) throw new Error("Invalid Space ID or bot is not in the space.");
-              throw new Error(`Webex API Error: ${errorMessages}`);
-          }
+      if (response.ok) {
           if (returnText) return response.text();
           return response.json();
-      } catch (error) {
-          if (error instanceof Error && error.message.includes('Too Many Requests') && attempt < MAX_RETRIES) {
-              const delay = INITIAL_BACKOFF_MS * Math.pow(2, attempt) + Math.random() * 1000;
-              console.warn(`Webex API rate limited. Retrying attempt ${attempt + 1}/${MAX_RETRIES} in ${Math.round(delay / 1000)}s...`);
-              await new Promise(resolve => setTimeout(resolve, delay));
-              continue;
-          }
-          throw error;
       }
+
+      // Handle rate limiting
+      if (response.status === 429 && attempt < MAX_RETRIES) {
+          const retryAfterHeader = response.headers.get('Retry-After');
+          const retryAfterSeconds = retryAfterHeader ? parseInt(retryAfterHeader, 10) : 0;
+          
+          const delay = retryAfterSeconds > 0 
+              ? retryAfterSeconds * 1000 
+              : INITIAL_BACKOFF_MS * Math.pow(2, attempt) + Math.random() * 1000;
+              
+          console.warn(`Webex API rate limited. Retrying attempt ${attempt + 1}/${MAX_RETRIES} in ${Math.round(delay / 1000)}s...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+      }
+      
+      // Handle other errors
+      const errorData = await response.json().catch(() => ({ message: response.statusText }));
+      const errorMessages = errorData.message ? errorData.message : `HTTP error! status: ${response.status}`;
+      if (response.status === 401) throw new Error("Invalid Bot Token.");
+      if (response.status === 404 && endpoint.startsWith('/messages')) throw new Error("Invalid Space ID or bot is not in the space.");
+      throw new Error(`Webex API Error: ${errorMessages}`);
   }
+
+  throw new Error(`Failed to call Webex endpoint ${endpoint} after ${MAX_RETRIES} retries.`);
 };
 
 
@@ -194,7 +198,7 @@ export const verifyWebexConnection = async (botToken: string, spaceId: string): 
 const fetchWithMerakiApi = async (
   apiKey: string,
   endpoint: string,
-  method: 'GET' | 'PUT' | 'POST' = 'GET',
+  method: 'GET' | 'PUT' | 'POST' | 'DELETE' = 'GET',
   body: Record<string, any> | null = null,
   signal?: AbortSignal
 ): Promise<any> => {
@@ -216,53 +220,84 @@ const fetchWithMerakiApi = async (
   const fullUrl = `${PROXY_URL}${MERAKI_BASE_URL}${endpoint}`;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      try {
-          const response = await fetch(fullUrl, options);
+      if (signal?.aborted) {
+          throw new Error("Operation aborted");
+      }
+      
+      const response = await fetch(fullUrl, options);
 
-          if (response.status === 429) {
-              throw new Error(`HTTP error! status: 429`);
-          }
-
-          if (!response.ok) {
-              if (response.status === 403 && fullUrl.includes('cors-anywhere')) {
-                  throw new Error(
-                      `Request was blocked by the public CORS proxy. This is common. Please visit ${PROXY_URL}, click the 'Request temporary access' button, and then try connecting again.`
-                  );
-              }
-              const errorData = await response.json().catch(() => ({}));
-              const errorMessages = errorData.errors ? errorData.errors.join(', ') : `HTTP error! status: ${response.status}`;
-              throw new Error(errorMessages);
-          }
+      // --- Success Case ---
+      if (response.ok) {
           if (response.status === 204) {
               return { success: true };
           }
           return response.json();
-      } catch (error) {
-           if (error instanceof Error) {
-              if (error.name === 'AbortError' || error.message.startsWith('Request was blocked by the public CORS proxy')) {
-                throw error;
-              }
-
-              if (error.message.includes('429') && attempt < MAX_RETRIES) {
-                const delay = INITIAL_BACKOFF_MS * Math.pow(2, attempt) + Math.random() * 1000;
-                console.warn(`Meraki API rate limited. Retrying attempt ${attempt + 1}/${MAX_RETRIES} in ${Math.round(delay / 1000)}s...`);
-                await new Promise(resolve => setTimeout(resolve, delay));
-                continue;
-              }
-
-              throw new Error(`Failed to fetch ${endpoint}: ${error.message}`);
-           }
-           throw new Error(`An unknown error occurred while fetching ${endpoint}`);
       }
+
+      // --- Retryable Rate Limit Error ---
+      if (response.status === 429 && attempt < MAX_RETRIES) {
+          const retryAfterHeader = response.headers.get('Retry-After');
+          const retryAfterSeconds = retryAfterHeader ? parseInt(retryAfterHeader, 10) : 0;
+          
+          // Use Retry-After if available, otherwise use exponential backoff
+          const delay = retryAfterSeconds > 0 
+              ? retryAfterSeconds * 1000 
+              : INITIAL_BACKOFF_MS * Math.pow(2, attempt) + Math.random() * 1000;
+              
+          console.warn(`Meraki API rate limited. Retrying attempt ${attempt + 1}/${MAX_RETRIES} in ${Math.round(delay / 1000)}s...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue; // Retry the loop
+      }
+
+      // --- Final/Fatal Errors ---
+      if (response.status === 403 && fullUrl.includes('cors-anywhere')) {
+          throw new Error(
+              `Request was blocked by the public CORS proxy. This is common. Please visit ${PROXY_URL}, click the 'Request temporary access' button, and then try connecting again.`
+          );
+      }
+      
+      const errorData = await response.json().catch(() => ({}));
+      const errorMessages = errorData.errors ? errorData.errors.join(', ') : `HTTP error! status: ${response.status}`;
+      throw new Error(errorMessages);
   }
+
+  throw new Error(`Failed to fetch ${endpoint} after ${MAX_RETRIES + 1} attempts.`);
+};
+
+export const getOrganizations = async (
+  apiKey: string
+): Promise<MerakiOrganization[]> => {
+  console.log('Fetching Meraki organizations');
+  return await fetchWithMerakiApi(apiKey, '/organizations');
+};
+
+export const getNetworkDevices = async (
+  apiKey: string,
+  networkId: string,
+): Promise<MerakiDevice[]> => {
+  console.log(`Fetching devices for network ${networkId}`);
+  const devices = await fetchWithMerakiApi(apiKey, `/networks/${networkId}/devices`);
+  return (devices || []).map((d: any) => ({
+    serial: d.serial,
+    name: d.name || 'Unnamed Device',
+    model: d.model,
+    networkId: d.networkId,
+    lanIp: d.lanIp,
+  }));
 };
 
 export const getOrgNetworks = async (
   apiKey: string,
-  orgId: string
+  orgId: string,
+  tags?: string[]
 ): Promise<MerakiNetwork[]> => {
   console.log(`Fetching networks for organization: ${orgId}`);
-  const networks = await fetchWithMerakiApi(apiKey, `/organizations/${orgId}/networks`);
+  let endpoint = `/organizations/${orgId}/networks`;
+  if (tags && tags.length > 0) {
+      const tagsQuery = tags.map(tag => `tags[]=${encodeURIComponent(tag)}`).join('&');
+      endpoint += `?${tagsQuery}&perPage=1000`; // Increase page size for tags
+  }
+  const networks = await fetchWithMerakiApi(apiKey, endpoint);
   if (!networks || !Array.isArray(networks) || networks.length === 0) {
     return [];
   }
@@ -270,6 +305,7 @@ export const getOrgNetworks = async (
       id: n.id,
       name: n.name,
       organizationId: n.organizationId,
+      tags: n.tags,
   }));
 };
 
@@ -286,20 +322,27 @@ export const claimDevices = async (
 
 export const getOrgDevices = async (
   apiKey: string,
-  orgId: string
+  orgId: string,
+  name?: string
 ): Promise<MerakiDevice[]> => {
   console.log(`Fetching all organization devices and statuses for orgId: ${orgId}`);
 
-  const [allDevices, statuses] = await Promise.all([
-    fetchWithMerakiApi(apiKey, `/organizations/${orgId}/devices`).catch(e => {
-        console.error('Fatal: Could not fetch organization devices.', e);
-        throw e;
-    }),
-    fetchWithMerakiApi(apiKey, `/organizations/${orgId}/devices/statuses`).catch(e => {
-      console.error('Could not fetch device statuses, proceeding without them.', e);
-      return [];
-    })
-  ]);
+  let devicesEndpoint = `/organizations/${orgId}/devices?perPage=1000`;
+  if (name) {
+      devicesEndpoint += `&name=${encodeURIComponent(name)}`;
+  }
+
+  // Fetch devices and statuses sequentially to reduce API burst rate
+  const allDevices = await fetchWithMerakiApi(apiKey, devicesEndpoint).catch(e => {
+      console.error('Fatal: Could not fetch organization devices.', e);
+      throw e;
+  });
+
+  const statuses = await fetchWithMerakiApi(apiKey, `/organizations/${orgId}/devices/statuses?perPage=1000`).catch(e => {
+    console.error('Could not fetch device statuses, proceeding without them.', e);
+    return [];
+  });
+  
 
   if (!allDevices || !Array.isArray(allDevices)) {
       console.warn('No devices found in the specified organization.');
@@ -314,24 +357,79 @@ export const getOrgDevices = async (
       model: device.model,
       networkId: device.networkId,
       status: statusMap.get(device.serial) || 'unknown',
+      lanIp: device.lanIp,
   }));
   
   console.log(`Total devices found: ${formattedDevices.length}`);
   return formattedDevices;
 };
 
-export interface SwitchPortSettings {
-    name?: string;
-    enabled?: boolean;
-    type?: 'access' | 'trunk';
-    vlan?: number;
-    voiceVlan?: number | null;
-    nativeVlan?: number;
-    allowedVlans?: string;
-    poeEnabled?: boolean;
-    stpGuard?: 'disabled' | 'root guard' | 'bpdu guard' | 'loop guard';
-    linkNegotiation?: 'Auto negotiate' | '10 Megabit half duplex' | '10 Megabit full duplex' | '100 Megabit half duplex' | '100 Megabit full duplex' | '1 Gigabit full duplex';
+export const getNetworkClients = async (
+  apiKey: string,
+  networkId: string,
+  timespan: number = 86400,
+  signal?: AbortSignal
+): Promise<MerakiClient[]> => {
+    console.log(`Fetching clients for network ${networkId} with timespan ${timespan}s`);
+    const endpoint = `/networks/${networkId}/clients?timespan=${timespan}&perPage=1000`;
+    const clients = await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+    return (clients || []).map((c: any) => ({
+        id: c.id,
+        description: c.description,
+        mac: c.mac,
+        ip: c.ip,
+        usage: c.usage,
+        status: c.status,
+    }));
+};
+
+export const cycleSwitchPort = async (
+  apiKey: string,
+  serial: string,
+  portId: string,
+  signal?: AbortSignal
+): Promise<any> => {
+    console.log(`Cycling port(s) ${portId} on device ${serial}`);
+    const portIdsToCycle: string[] = [];
+    if (portId.includes('-')) {
+        const [start, end] = portId.split('-').map(Number);
+        for (let i = start; i <= end; i++) portIdsToCycle.push(i.toString());
+    } else {
+        portIdsToCycle.push(portId);
+    }
+    const results = [];
+    for (const pId of portIdsToCycle) {
+        if (signal?.aborted) throw new Error("Operation aborted");
+        const endpoint = `/devices/${serial}/switch/ports/${pId}/cycle`;
+        const result = await fetchWithMerakiApi(apiKey, endpoint, 'POST', {}, signal);
+        results.push({ portId: pId, ...result });
+    }
+    return results;
 }
+
+export const createActionBatch = async (
+  apiKey: string,
+  orgId: string,
+  actions: MerakiAction[],
+  synchronous: boolean = false,
+  signal?: AbortSignal
+): Promise<any> => {
+    console.log(`Creating action batch for org ${orgId}`);
+    const endpoint = `/organizations/${orgId}/actionBatches`;
+    const body = { actions, confirmed: true, synchronous };
+    return await fetchWithMerakiApi(apiKey, endpoint, 'POST', body, signal);
+}
+
+export const updateNetworkStpSettings = async (
+  apiKey: string,
+  networkId: string,
+  settings: MerakiStpSettings,
+  signal?: AbortSignal
+): Promise<any> => {
+    console.log(`Updating STP settings for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/switch/settings/stp`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'PUT', settings, signal);
+};
 
 export const getSwitchPortDetails = async (
   apiKey: string,
@@ -386,6 +484,10 @@ export const updateSwitchPort = async (
     if (settings.poeEnabled !== undefined) body.poeEnabled = settings.poeEnabled;
     if (settings.stpGuard) body.stpGuard = settings.stpGuard;
     if (settings.linkNegotiation) body.linkNegotiation = settings.linkNegotiation;
+    if (settings.isolationEnabled !== undefined) body.isolationEnabled = settings.isolationEnabled;
+    if (settings.macAllowList !== undefined) body.macAllowList = settings.macAllowList;
+    if (settings.stickyMacAllowList !== undefined) body.stickyMacAllowList = settings.stickyMacAllowList;
+    if (settings.stickyMacAllowListLimit !== undefined) body.stickyMacAllowListLimit = settings.stickyMacAllowListLimit;
 
     const portIdsToUpdate: string[] = [];
     if (portId.includes('-')) {
@@ -539,36 +641,108 @@ export const getSwitchPortStats = async (
     return statsByPort;
 };
 
-export const getOrgVpnStatuses = async (
-    apiKey: string,
-    orgId: string,
-    signal?: AbortSignal
-): Promise<MerakiVpnStatus[]> => {
-    console.log(`Fetching VPN statuses for organization ${orgId}`);
-    const endpoint = `/organizations/${orgId}/appliance/vpn/statuses`;
-    const data = await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
-    return data || [];
-}
+// --- New Wireless (MR) Functions ---
 
-export const getNetworkL3FirewallRules = async (
-    apiKey: string,
-    networkId: string,
-    signal?: AbortSignal
-): Promise<MerakiFirewallRule[]> => {
+export const getNetworkSsids = async (apiKey: string, networkId: string, signal?: AbortSignal): Promise<WirelessSsid[]> => {
+    console.log(`Fetching SSIDs for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/wireless/ssids`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const updateNetworkSsid = async (apiKey: string, networkId: string, ssidNumber: number, settings: Partial<WirelessSsid>, signal?: AbortSignal): Promise<WirelessSsid> => {
+    console.log(`Updating SSID ${ssidNumber} for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/wireless/ssids/${ssidNumber}`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'PUT', settings, signal);
+};
+
+export const updateDeviceWirelessRadioSettings = async (apiKey: string, serial: string, settings: DeviceWirelessRadioSettings, signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating radio settings for device ${serial}`);
+    const endpoint = `/devices/${serial}/wireless/radio/settings`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'PUT', settings, signal);
+};
+
+export const provisionNetworkClients = async (apiKey: string, networkId: string, payload: ClientProvisionPayload, signal?: AbortSignal): Promise<any> => {
+    console.log(`Provisioning clients in network ${networkId}`);
+    const endpoint = `/networks/${networkId}/clients/provision`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'POST', payload, signal);
+};
+
+// --- New Security & SD-WAN (MX) Functions ---
+
+export const getNetworkL3FirewallRules = async (apiKey: string, networkId: string, signal?: AbortSignal): Promise<MerakiL3FirewallRule[]> => {
     console.log(`Fetching L3 firewall rules for network ${networkId}`);
     const endpoint = `/networks/${networkId}/appliance/firewall/l3FirewallRules`;
     const data = await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
     return data.rules || [];
-}
+};
 
-export const updateNetworkL3FirewallRules = async (
-    apiKey: string,
-    networkId: string,
-    rules: MerakiFirewallRule[],
-    signal?: AbortSignal
-): Promise<any> => {
+export const updateNetworkL3FirewallRules = async (apiKey: string, networkId: string, rules: MerakiL3FirewallRule[], signal?: AbortSignal): Promise<any> => {
     console.log(`Updating L3 firewall rules for network ${networkId}`);
     const endpoint = `/networks/${networkId}/appliance/firewall/l3FirewallRules`;
     const body = { rules };
     return await fetchWithMerakiApi(apiKey, endpoint, 'PUT', body, signal);
-}
+};
+
+export const getNetworkL7FirewallRules = async (apiKey: string, networkId: string, signal?: AbortSignal): Promise<{ rules: MerakiL7FirewallRule[] }> => {
+    console.log(`Fetching L7 firewall rules for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/appliance/firewall/l7FirewallRules`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const updateNetworkL7FirewallRules = async (apiKey: string, networkId: string, rules: MerakiL7FirewallRule[], signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating L7 firewall rules for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/appliance/firewall/l7FirewallRules`;
+    const body = { rules };
+    return await fetchWithMerakiApi(apiKey, endpoint, 'PUT', body, signal);
+};
+
+export const getNetworkContentFiltering = async (apiKey: string, networkId: string, signal?: AbortSignal): Promise<ContentFilteringSettings> => {
+    console.log(`Fetching content filtering settings for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/appliance/contentFiltering`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const updateNetworkContentFiltering = async (apiKey: string, networkId: string, settings: ContentFilteringSettings, signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating content filtering for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/appliance/contentFiltering`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'PUT', settings, signal);
+};
+
+export const getNetworkTrafficShapingRules = async (apiKey: string, networkId: string, signal?: AbortSignal): Promise<{ rules: TrafficShapingRule[] }> => {
+    console.log(`Fetching traffic shaping rules for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/appliance/trafficShaping/rules`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const updateNetworkTrafficShapingRules = async (apiKey: string, networkId: string, rules: TrafficShapingRule[], signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating traffic shaping rules for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/appliance/trafficShaping/rules`;
+    const body = { rules };
+    return await fetchWithMerakiApi(apiKey, endpoint, 'PUT', body, signal);
+};
+
+export const getNetworkSiteToSiteVpn = async (apiKey: string, networkId: string, signal?: AbortSignal): Promise<SiteToSiteVpnSettings> => {
+    console.log(`Fetching site-to-site VPN settings for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/appliance/vpn/siteToSiteVpn`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const updateNetworkSiteToSiteVpn = async (apiKey: string, networkId: string, settings: SiteToSiteVpnSettings, signal?: AbortSignal): Promise<any> => {
+    console.log(`Updating site-to-site VPN for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/appliance/vpn/siteToSiteVpn`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'PUT', settings, signal);
+};
+
+export const getNetworkApplianceVlans = async (apiKey: string, networkId: string, signal?: AbortSignal): Promise<ApplianceVlan[]> => {
+    console.log(`Fetching appliance VLANs for network ${networkId}`);
+    const endpoint = `/networks/${networkId}/appliance/vlans`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'GET', null, signal);
+};
+
+export const createNetworkApplianceVlan = async (apiKey: string, networkId: string, vlan: ApplianceVlan, signal?: AbortSignal): Promise<any> => {
+    console.log(`Creating appliance VLAN in network ${networkId}`);
+    const endpoint = `/networks/${networkId}/appliance/vlans`;
+    return await fetchWithMerakiApi(apiKey, endpoint, 'POST', vlan, signal);
+};
+
+export const updateNetworkApplianceVlan = async (apiKey: string, networkId: string, vlanId: string, vlan: Partial<ApplianceVlan>, signal?:

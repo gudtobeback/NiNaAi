@@ -9,6 +9,7 @@ import * as db from '../services/dbService';
 type Tab = 'status' | 'offline' | 'vpn' | 'logs' | 'changes' | 'claim' | 'templates';
 
 interface DevicePanelProps {
+    isOpen: boolean;
     devices: MerakiDevice[];
     merakiNetworks: MerakiNetwork[];
     vpnStatuses: MerakiVpnStatus[] | null;
@@ -107,7 +108,7 @@ const PortStatsChart: React.FC<{ stats: MerakiSwitchPortStats[]; sentLabel: stri
 };
 
 const DevicePanel: React.FC<DevicePanelProps> = ({
-    devices, merakiNetworks, vpnStatuses, onClaimDevices, onManualRca, onShowFeatures,
+    isOpen, devices, merakiNetworks, vpnStatuses, onClaimDevices, onManualRca, onShowFeatures,
     onFetchLogs, onFetchDetails, onFetchConfigChanges, portStats, activePortDetails,
     onApplyTemplate, userId
 }) => {
@@ -270,7 +271,12 @@ const DevicePanel: React.FC<DevicePanelProps> = ({
                                         <span className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${device.status === 'online' ? 'bg-green-500' : 'bg-red-500'}`} title={device.status}></span>
                                         <div>
                                             <p className="font-semibold text-sm text-[var(--color-text-primary)]">{device.name}</p>
-                                            <p className="text-xs text-[var(--color-text-secondary)]">{device.model} | {device.serial}</p>
+                                            <p className="text-xs text-[var(--color-text-secondary)]">
+                                                {device.model}
+                                                <span className="text-[var(--color-text-tertiary)] mx-1">|</span>
+                                                {device.lanIp || 'No IP'}
+                                            </p>
+                                            <p className="text-xs text-[var(--color-text-tertiary)] font-mono">{device.serial}</p>
                                         </div>
                                     </div>
                                     <div className="flex space-x-1">
@@ -388,7 +394,12 @@ const DevicePanel: React.FC<DevicePanelProps> = ({
     };
     
     return (
-        <aside className="hidden md:flex w-full md:w-2/5 lg:w-[450px] bg-[var(--color-surface-subtle)] border-l border-[var(--color-border-primary)] flex-col overflow-hidden">
+        <aside className={`
+            bg-[var(--color-surface-subtle)] border-l border-[var(--color-border-primary)] 
+            flex-col overflow-hidden transition-all duration-300 ease-in-out
+            hidden md:flex 
+            ${isOpen ? 'w-full md:w-2/5 lg:w-[450px]' : 'w-0 border-l-0'}
+        `}>
             {portStats && activePortDetails && (
                 <div className="p-4 border-b-2 border-[var(--color-primary)] bg-white animate-fade-in">
                     <h3 className="font-bold text-lg">Port Analysis: {activePortDetails.device.name}</h3>

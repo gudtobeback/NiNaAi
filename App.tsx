@@ -1,9 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { User, NetworkConfiguration, ChatMessage, Sender, MerakiDevice, MerakiEvent, MerakiDeviceDetails, MerakiConfigChange, MerakiSwitchPortStats, MerakiNetwork, DefaultTemplate, MerakiVpnStatus, MerakiFirewallRule } from './types';
+import { User, NetworkConfiguration, ChatMessage, Sender, MerakiDevice, MerakiEvent, MerakiDeviceDetails, MerakiConfigChange, MerakiSwitchPortStats, MerakiNetwork, DefaultTemplate, MerakiVpnStatus, MerakiL3FirewallRule, MerakiOrganization } from './types';
 import * as auth from './services/authService';
 import * as db from './services/dbService';
 import { getAiResponse } from './services/geminiService';
-import { getOrgDevices, updateSwitchPort, getDeviceEvents, getConfigChanges, getDeviceDetails, getSwitchPortDetails, getSwitchPortStats, getOrgNetworks, claimDevices, getOrgVpnStatuses, getNetworkL3FirewallRules, updateNetworkL3FirewallRules, sendWebexMessage, getWebexMessages, getWebexMe } from './services/merakiService';
+import { 
+    getOrganizations, getOrgDevices, updateSwitchPort, getDeviceEvents, getConfigChanges, getDeviceDetails, 
+    getSwitchPortDetails, getSwitchPortStats, getOrgNetworks, claimDevices, getOrgVpnStatuses, 
+    getNetworkL3FirewallRules, updateNetworkL3FirewallRules, sendWebexMessage, getWebexMessages, getWebexMe, 
+    getNetworkDevices, getNetworkClients, cycleSwitchPort, createActionBatch, updateNetworkStpSettings,
+    getNetworkSsids, updateNetworkSsid, provisionNetworkClients, updateDeviceWirelessRadioSettings,
+    getNetworkL7FirewallRules, updateNetworkL7FirewallRules, getNetworkContentFiltering, updateNetworkContentFiltering,
+    getNetworkTrafficShapingRules, updateNetworkTrafficShapingRules, getNetworkSiteToSiteVpn, updateNetworkSiteToSiteVpn,
+    getNetworkApplianceVlans, createNetworkApplianceVlan, updateNetworkApplianceVlan, getDeviceUplink, getOrgUplinksLossAndLatency,
+    rebootDevice, blinkDeviceLeds, getNetworkFirmwareUpgrades, updateNetworkFirmwareUpgrades, getNetworkAlertSettings,
+    updateNetworkAlertSettings, getNetworkSyslogServers, updateNetworkSyslogServers, getOrgSnmpSettings, updateOrgSnmpSettings,
+    getOrgConfigTemplates, bindNetworkToTemplate, getOrgAdmins, createOrgAdmin, updateOrgAdmin, deleteOrgAdmin,
+    generateCameraSnapshot, getCameraMotionAnalytics, getSensorAlerts, updateSensorAlerts, getCellularStatus,
+    getCellularUsageHistory, updateApplianceUplinkSettings, getNetworkTraffic, getOrgAuditLogs, getNetworkFloorPlans,
+    updateWirelessBluetoothSettings, getOrgLicenseOverview, getOrgLicenses
+} from './services/merakiService';
 
 import LoginScreen from './components/LoginScreen';
 import Header from './components/Header';
@@ -56,7 +71,9 @@ const App: React.FC = () => {
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [isHelpOpen, setIsHelpOpen] = useState(false);
     const [isMaturityOpen, setIsMaturityOpen] = useState(false);
+    const [isDevicePanelOpen, setIsDevicePanelOpen] = useState(false);
     const [isEasterEggVisible, setIsEasterEggVisible] = useState(false);
+    const [merakiOrgs, setMerakiOrgs] = useState<MerakiOrganization[]>([]);
     const [merakiDevices, setMerakiDevices] = useState<MerakiDevice[]>([]);
     const [merakiNetworksList, setMerakiNetworksList] = useState<MerakiNetwork[]>([]);
     const [portStats, setPortStats] = useState<MerakiSwitchPortStats[] | null>(null);
@@ -128,6 +145,7 @@ const App: React.FC = () => {
                 setIsInitialDeviceLoad(true);
                 setMessages([]);
                 setMerakiDevices([]);
+                setMerakiOrgs([]);
                 setPortStats(null);
                 setActivePortDetails(null);
                 setBotEmail(null);
@@ -135,6 +153,18 @@ const App: React.FC = () => {
                 isExecutingAction.current = false;
 
                 const activeNetwork = networks.find(n => n.id === activeNetworkId);
+                if (!activeNetwork) {
+                    setIsInitialDeviceLoad(false);
+                    return;
+                }
+
+                try {
+                    const orgs = await getOrganizations(activeNetwork.apiKey);
+                    setMerakiOrgs(orgs);
+                } catch (error) {
+                    console.error("Failed to load organizations:", error);
+                    await addSystemMessage(`❌ Error fetching organizations: ${error instanceof Error ? error.message : 'Unknown error'}. Please check your Meraki API Key.`, true);
+                }
 
                 if (activeNetwork?.webexVerified) {
                     try {
@@ -154,7 +184,6 @@ const App: React.FC = () => {
 
                 await loadChatHistory(user.id, activeNetworkId);
                 await loadMerakiDevices(); 
-                
                 await loadMerakiNetworks();
                 await loadVpnStatuses();
 
@@ -175,6 +204,7 @@ const App: React.FC = () => {
             } else {
                 setMessages([]);
                 setMerakiDevices([]);
+                setMerakiOrgs([]);
                 setMerakiNetworksList([]);
                 setVpnStatuses(null);
             }
@@ -282,32 +312,36 @@ const App: React.FC = () => {
         }
     };
 
-    const loadMerakiDevices = async () => {
+    const loadMerakiDevices = async (name?: string) => {
         const activeNetwork = networks.find(n => n.id === activeNetworkId);
         if (!activeNetwork) return;
 
         await addSystemMessage("Fetching Meraki device list...");
         try {
-            const devices = await getOrgDevices(activeNetwork.apiKey, activeNetwork.orgId);
+            const devices = await getOrgDevices(activeNetwork.apiKey, activeNetwork.orgId, name);
             setMerakiDevices(devices);
             await addSystemMessage(`Successfully discovered ${devices.length} devices.`);
+            return devices;
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
             await addSystemMessage(`Error fetching devices: ${errorMessage}`, true);
             setMerakiDevices([]);
+            return [];
         }
     };
 
-    const loadMerakiNetworks = async () => {
+    const loadMerakiNetworks = async (tags?: string[]) => {
         const activeNetwork = networks.find(n => n.id === activeNetworkId);
         if (!activeNetwork) return;
         try {
-            const merakiNets = await getOrgNetworks(activeNetwork.apiKey, activeNetwork.orgId);
+            const merakiNets = await getOrgNetworks(activeNetwork.apiKey, activeNetwork.orgId, tags);
             setMerakiNetworksList(merakiNets);
+            return merakiNets;
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
             await addSystemMessage(`Error fetching network list: ${errorMessage}`, true);
             setMerakiNetworksList([]);
+            return [];
         }
     };
     
@@ -412,6 +446,8 @@ const App: React.FC = () => {
             const finalResponseText = await getAiResponse(
                 updatedMessages,
                 merakiDevices,
+                merakiOrgs,
+                merakiNetworksList,
                 activeNetwork,
                 undefined, // No ephemeral prompt here, it's part of history
                 (chunk) => {
@@ -480,32 +516,369 @@ const App: React.FC = () => {
         
         try {
             const action = JSON.parse(match[1]);
+            const { payload } = action;
+
+            // --- Start of action handling ---
+            setLoadingState('thinking'); // Default to thinking, can be overridden
 
             if (action.action === 'update_switch_port') {
-                if (!action.payload || !action.payload.serial || !action.payload.portId) {
-                    throw new Error("Action 'update_switch_port' is missing required payload parameters (serial, portId).");
-                }
-                setLoadingState('thinking');
-                const { serial, portId, ...settings } = action.payload;
+                const { serial, portId, ...settings } = payload;
                 await addSystemMessage(`Executing action: Updating port(s) ${portId} on device ${serial}...`, true);
                 await updateSwitchPort(activeNetwork.apiKey, serial, portId, settings);
                 await addSystemMessage(`✅ Success! Port(s) ${portId} on ${serial} have been updated.`, true);
-                setLoadingState('idle');
             
             } else if (action.action === 'claim_devices') {
-                if (!action.payload || !action.payload.networkName || !action.payload.serials) {
-                    throw new Error("Action 'claim_devices' is missing required payload parameters (networkName, serials).");
-                }
-                const { networkName, serials } = action.payload;
+                const { networkName, serials } = payload;
                 const targetNetwork = merakiNetworksList.find(n => n.name.toLowerCase() === networkName.toLowerCase());
-
-                if (!targetNetwork) {
-                    await addSystemMessage(`❌ Error: Could not find a network named "${networkName}". Please check the name and try again. Available networks: ${merakiNetworksList.map(n => n.name).join(', ')}`, true);
-                    setLoadingState('idle');
-                    return;
-                }
+                if (!targetNetwork) throw new Error(`Could not find a network named "${networkName}".`);
                 await handleClaimDevices(targetNetwork.id, serials);
 
+            } else if (action.action === 'list_organizations') {
+                await addSystemMessage('Fetching Meraki organizations...', true);
+                const orgs = await getOrganizations(activeNetwork.apiKey);
+                setMerakiOrgs(orgs);
+                await addSystemMessage(`Found ${orgs.length} organizations. Sending to AI for summary...`, true);
+                await handleSendMessage(`CONTEXT: Here is the list of organizations. Please present this to the user in a readable format.\n\nDATA: ${JSON.stringify(orgs, null, 2)}`);
+
+            } else if (action.action === 'list_devices') {
+                const { networkId } = payload;
+                const topic = networkId ? `devices in network ${networkId}` : 'all devices in the organization';
+                await addSystemMessage(`Fetching ${topic}...`, true);
+                const devices = networkId
+                    ? await getNetworkDevices(activeNetwork.apiKey, networkId)
+                    : await getOrgDevices(activeNetwork.apiKey, activeNetwork.orgId);
+                setMerakiDevices(devices); // Update main device list
+                await addSystemMessage(`Found ${devices.length} devices. Sending to AI for summary...`, true);
+                await handleSendMessage(`CONTEXT: Here is the list of devices you requested. Please present this to the user in a readable format.\n\nDATA: ${JSON.stringify(devices, null, 2)}`);
+
+            } else if (action.action === 'get_client_inventory') {
+                setLoadingState('rca');
+                rcaAbortController.current = new AbortController();
+                const { networkId, timespan } = payload;
+                const network = merakiNetworksList.find(n => n.id === networkId);
+                await addSystemMessage(`Fetching client inventory for network "${network?.name || networkId}"...`, true);
+                const clients = await getNetworkClients(activeNetwork.apiKey, networkId, timespan, rcaAbortController.current.signal);
+                await addSystemMessage(`Found ${clients.length} clients. Sending to AI for analysis...`, true);
+                await handleSendMessage(`CONTEXT: Here is the client inventory you requested for network "${network?.name || networkId}". Please summarize the key findings, such as top clients by usage.\n\nDATA: ${JSON.stringify(clients, null, 2)}`);
+
+            } else if (action.action === 'cycle_switch_port') {
+                const { serial, portId } = payload;
+                await addSystemMessage(`Executing action: Cycling PoE on port(s) ${portId} on device ${serial}...`, true);
+                await cycleSwitchPort(activeNetwork.apiKey, serial, portId);
+                await addSystemMessage(`✅ Success! Port(s) ${portId} on ${serial} have been power-cycled.`, true);
+
+            } else if (action.action === 'update_stp_settings') {
+                const { networkId, ...settings } = payload;
+                const network = merakiNetworksList.find(n => n.id === networkId);
+                await addSystemMessage(`Executing action: Updating STP settings for network "${network?.name || networkId}"...`, true);
+                await updateNetworkStpSettings(activeNetwork.apiKey, networkId, settings);
+                await addSystemMessage(`✅ Success! STP settings have been updated.`, true);
+
+            } else if (action.action === 'create_action_batch') {
+                const { actions } = payload;
+                await addSystemMessage(`Executing action: Creating an action batch with ${actions.length} operation(s)...`, true);
+                const result = await createActionBatch(activeNetwork.apiKey, activeNetwork.orgId, actions);
+                if (result.status?.completed) {
+                    await addSystemMessage(`✅ Success! Action batch completed.`, true);
+                } else {
+                    await addSystemMessage(`⚠️ Action batch finished. Status: ${JSON.stringify(result.status)}`, true);
+                }
+            
+            // --- WIRELESS ACTIONS ---
+            } else if (action.action === 'list_ssids') {
+                const { networkId } = payload;
+                await addSystemMessage(`Fetching SSIDs for network ${networkId}...`, true);
+                const ssids = await getNetworkSsids(activeNetwork.apiKey, networkId);
+                await addSystemMessage(`Found ${ssids.length} SSIDs. Sending to AI for summary...`, true);
+                await handleSendMessage(`CONTEXT: Here is the list of SSIDs. Please summarize them for the user.\n\nDATA: ${JSON.stringify(ssids, null, 2)}`);
+
+            } else if (action.action === 'update_ssid') {
+                const { networkId, ssidNumber, ...settings } = payload;
+                await addSystemMessage(`Executing action: Updating SSID ${ssidNumber} in network ${networkId}...`, true);
+                await updateNetworkSsid(activeNetwork.apiKey, networkId, ssidNumber, settings);
+                await addSystemMessage(`✅ Success! SSID ${ssidNumber} has been updated.`, true);
+
+            } else if (action.action === 'provision_client') {
+                const { networkId, ...provisionPayload } = payload;
+                await addSystemMessage(`Executing action: Applying device policy in network ${networkId}...`, true);
+                await provisionNetworkClients(activeNetwork.apiKey, networkId, provisionPayload);
+                await addSystemMessage(`✅ Success! Policy applied to ${provisionPayload.macs.length} client(s).`, true);
+
+            } else if (action.action === 'update_device_radio_settings') {
+                const { serial, ...settings } = payload;
+                await addSystemMessage(`Executing action: Updating radio settings for AP ${serial}...`, true);
+                await updateDeviceWirelessRadioSettings(activeNetwork.apiKey, serial, settings);
+                await addSystemMessage(`✅ Success! Radio settings for ${serial} have been updated.`, true);
+
+            // --- SECURITY & SD-WAN ACTIONS ---
+            } else if (action.action === 'get_l7_firewall_rules') {
+                const { networkId } = payload;
+                await addSystemMessage(`Fetching L7 firewall rules for network ${networkId}...`, true);
+                const data = await getNetworkL7FirewallRules(activeNetwork.apiKey, networkId);
+                await addSystemMessage(`Found ${data.rules?.length || 0} rules. Sending to AI for summary...`, true);
+                await handleSendMessage(`CONTEXT: Here are the L7 firewall rules. Please summarize them.\n\nDATA: ${JSON.stringify(data.rules, null, 2)}`);
+
+            } else if (action.action === 'update_l7_firewall_rules') {
+                const { networkId, rules } = payload;
+                await addSystemMessage(`Executing action: Updating L7 firewall rules for network ${networkId}...`, true);
+                await updateNetworkL7FirewallRules(activeNetwork.apiKey, networkId, rules);
+                await addSystemMessage(`✅ Success! L7 firewall rules have been updated.`, true);
+
+            } else if (action.action === 'get_content_filtering') {
+                const { networkId } = payload;
+                await addSystemMessage(`Fetching content filtering settings for network ${networkId}...`, true);
+                const settings = await getNetworkContentFiltering(activeNetwork.apiKey, networkId);
+                await addSystemMessage(`Found settings. Sending to AI for summary...`, true);
+                await handleSendMessage(`CONTEXT: Here are the content filtering settings. Please summarize them.\n\nDATA: ${JSON.stringify(settings, null, 2)}`);
+            
+            } else if (action.action === 'update_content_filtering') {
+                const { networkId, ...settings } = payload;
+                await addSystemMessage(`Executing action: Updating content filtering for network ${networkId}...`, true);
+                await updateNetworkContentFiltering(activeNetwork.apiKey, networkId, settings);
+                await addSystemMessage(`✅ Success! Content filtering settings updated.`, true);
+
+            } else if (action.action === 'get_traffic_shaping_rules') {
+                const { networkId } = payload;
+                await addSystemMessage(`Fetching traffic shaping rules for network ${networkId}...`, true);
+                const data = await getNetworkTrafficShapingRules(activeNetwork.apiKey, networkId);
+                await addSystemMessage(`Found ${data.rules?.length || 0} rules. Sending to AI for summary...`, true);
+                await handleSendMessage(`CONTEXT: Here are the traffic shaping rules. Please summarize them.\n\nDATA: ${JSON.stringify(data.rules, null, 2)}`);
+
+            } else if (action.action === 'update_traffic_shaping_rules') {
+                const { networkId, rules } = payload;
+                await addSystemMessage(`Executing action: Updating traffic shaping rules for network ${networkId}...`, true);
+                await updateNetworkTrafficShapingRules(activeNetwork.apiKey, networkId, rules);
+                await addSystemMessage(`✅ Success! Traffic shaping rules updated.`, true);
+            
+            } else if (action.action === 'get_s2s_vpn_settings') {
+                const { networkId } = payload;
+                await addSystemMessage(`Fetching site-to-site VPN settings for network ${networkId}...`, true);
+                const settings = await getNetworkSiteToSiteVpn(activeNetwork.apiKey, networkId);
+                await addSystemMessage(`Found settings. Sending to AI for summary...`, true);
+                await handleSendMessage(`CONTEXT: Here are the S2S VPN settings. Please summarize them.\n\nDATA: ${JSON.stringify(settings, null, 2)}`);
+
+            } else if (action.action === 'update_s2s_vpn_settings') {
+                const { networkId, ...settings } = payload;
+                await addSystemMessage(`Executing action: Updating site-to-site VPN for network ${networkId}...`, true);
+                await updateNetworkSiteToSiteVpn(activeNetwork.apiKey, networkId, settings);
+                await addSystemMessage(`✅ Success! Site-to-site VPN settings updated.`, true);
+
+            } else if (action.action === 'list_appliance_vlans') {
+                const { networkId } = payload;
+                await addSystemMessage(`Fetching appliance VLANs for network ${networkId}...`, true);
+                const vlans = await getNetworkApplianceVlans(activeNetwork.apiKey, networkId);
+                await addSystemMessage(`Found ${vlans.length} VLANs. Sending to AI for summary...`, true);
+                await handleSendMessage(`CONTEXT: Here are the appliance VLANs. Please summarize them.\n\nDATA: ${JSON.stringify(vlans, null, 2)}`);
+
+            } else if (action.action === 'create_appliance_vlan') {
+                const { networkId, ...vlanData } = payload;
+                await addSystemMessage(`Executing action: Creating VLAN ${vlanData.id} in network ${networkId}...`, true);
+                await createNetworkApplianceVlan(activeNetwork.apiKey, networkId, vlanData);
+                await addSystemMessage(`✅ Success! VLAN ${vlanData.id} has been created.`, true);
+
+            } else if (action.action === 'update_appliance_vlan') {
+                const { networkId, vlanId, ...vlanData } = payload;
+                await addSystemMessage(`Executing action: Updating VLAN ${vlanId} in network ${networkId}...`, true);
+                await updateNetworkApplianceVlan(activeNetwork.apiKey, networkId, vlanId, vlanData);
+                await addSystemMessage(`✅ Success! VLAN ${vlanId} has been updated.`, true);
+
+            // --- OPERATIONS & HEALTH ---
+            } else if (action.action === 'get_device_uplink') {
+                const { serial } = payload;
+                await addSystemMessage(`Fetching uplink status for device ${serial}...`, true);
+                const data = await getDeviceUplink(activeNetwork.apiKey, serial);
+                await addSystemMessage(`Found uplink data. Sending to AI for summary...`, true);
+                await handleSendMessage(`CONTEXT: Here is the uplink status. Please summarize it.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+
+            } else if (action.action === 'get_uplinks_loss_and_latency') {
+                const { ip, timespan } = payload;
+                await addSystemMessage(`Fetching uplink loss/latency to ${ip}...`, true);
+                const data = await getOrgUplinksLossAndLatency(activeNetwork.apiKey, activeNetwork.orgId, ip, timespan);
+                await addSystemMessage(`Found ${data.length} devices with data. Sending to AI for summary...`, true);
+                await handleSendMessage(`CONTEXT: Here is the uplink performance data. Please summarize it.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+
+            } else if (action.action === 'reboot_device') {
+                const { serial } = payload;
+                await addSystemMessage(`Executing action: Rebooting device ${serial}...`, true);
+                await rebootDevice(activeNetwork.apiKey, serial);
+                await addSystemMessage(`✅ Success! Device ${serial} is rebooting.`, true);
+
+            } else if (action.action === 'blink_device_leds') {
+                const { serial, duration } = payload;
+                await addSystemMessage(`Executing action: Blinking LEDs on ${serial} for ${duration}s...`, true);
+                await blinkDeviceLeds(activeNetwork.apiKey, serial, duration);
+                await addSystemMessage(`✅ Success! LEDs on device ${serial} are blinking.`, true);
+
+            } else if (action.action === 'get_firmware_upgrades') {
+                const { networkId } = payload;
+                await addSystemMessage(`Fetching firmware upgrade info for network ${networkId}...`, true);
+                const data = await getNetworkFirmwareUpgrades(activeNetwork.apiKey, networkId);
+                await addSystemMessage(`Found firmware data. Sending to AI for summary...`, true);
+                await handleSendMessage(`CONTEXT: Here is the firmware upgrade info. Please summarize it.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+
+            } else if (action.action === 'update_firmware_upgrades') {
+                const { networkId, ...fwPayload } = payload;
+                await addSystemMessage(`Executing action: Scheduling firmware upgrade for network ${networkId}...`, true);
+                await updateNetworkFirmwareUpgrades(activeNetwork.apiKey, networkId, fwPayload);
+                await addSystemMessage(`✅ Success! Firmware upgrade has been scheduled.`, true);
+
+            } else if (action.action === 'get_alert_settings') {
+                const { networkId } = payload;
+                await addSystemMessage(`Fetching alert settings for network ${networkId}...`, true);
+                const data = await getNetworkAlertSettings(activeNetwork.apiKey, networkId);
+                await addSystemMessage(`Found settings. Sending to AI for summary...`, true);
+                await handleSendMessage(`CONTEXT: Here are the alert settings. Please summarize them.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+
+            } else if (action.action === 'update_alert_settings') {
+                const { networkId, ...settings } = payload;
+                await addSystemMessage(`Executing action: Updating alert settings for network ${networkId}...`, true);
+                await updateNetworkAlertSettings(activeNetwork.apiKey, networkId, settings);
+                await addSystemMessage(`✅ Success! Alert settings have been updated.`, true);
+            
+            } else if (action.action === 'get_syslog_servers') {
+                const { networkId } = payload;
+                await addSystemMessage(`Fetching syslog servers for network ${networkId}...`, true);
+                const data = await getNetworkSyslogServers(activeNetwork.apiKey, networkId);
+                await addSystemMessage(`Found ${data.servers?.length || 0} servers. Sending to AI...`, true);
+                await handleSendMessage(`CONTEXT: Here are the syslog servers. Please list them.\n\nDATA: ${JSON.stringify(data.servers, null, 2)}`);
+
+            } else if (action.action === 'update_syslog_servers') {
+                const { networkId, servers } = payload;
+                await addSystemMessage(`Executing action: Updating syslog servers for network ${networkId}...`, true);
+                await updateNetworkSyslogServers(activeNetwork.apiKey, networkId, servers);
+                await addSystemMessage(`✅ Success! Syslog servers have been updated.`, true);
+
+            } else if (action.action === 'get_snmp_settings') {
+                await addSystemMessage(`Fetching SNMP settings for the organization...`, true);
+                const data = await getOrgSnmpSettings(activeNetwork.apiKey, activeNetwork.orgId);
+                await addSystemMessage(`Found settings. Sending to AI for summary...`, true);
+                await handleSendMessage(`CONTEXT: Here are the SNMP settings. Please summarize them.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+
+            } else if (action.action === 'update_snmp_settings') {
+                await addSystemMessage(`Executing action: Updating SNMP settings...`, true);
+                await updateOrgSnmpSettings(activeNetwork.apiKey, activeNetwork.orgId, payload);
+                await addSystemMessage(`✅ Success! SNMP settings have been updated.`, true);
+
+            // --- TEMPLATES & SCALE ---
+            } else if (action.action === 'list_config_templates') {
+                await addSystemMessage(`Fetching config templates for the organization...`, true);
+                const data = await getOrgConfigTemplates(activeNetwork.apiKey, activeNetwork.orgId);
+                await addSystemMessage(`Found ${data.length} templates. Sending to AI...`, true);
+                await handleSendMessage(`CONTEXT: Here are the config templates. Please list them.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+            
+            } else if (action.action === 'bind_network_to_template') {
+                const { networkId, ...bindPayload } = payload;
+                await addSystemMessage(`Executing action: Binding network ${networkId} to template ${bindPayload.configTemplateId}...`, true);
+                await bindNetworkToTemplate(activeNetwork.apiKey, networkId, bindPayload);
+                await addSystemMessage(`✅ Success! Network has been bound to the template.`, true);
+
+            // --- SECURITY & ACCESS ---
+            } else if (action.action === 'list_org_admins') {
+                await addSystemMessage('Fetching organization administrators...', true);
+                const data = await getOrgAdmins(activeNetwork.apiKey, activeNetwork.orgId);
+                await addSystemMessage(`Found ${data.length} admins. Sending to AI...`, true);
+                await handleSendMessage(`CONTEXT: Here are the organization admins. Please list them.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+
+            } else if (action.action === 'create_org_admin') {
+                await addSystemMessage(`Executing action: Creating new admin...`, true);
+                await createOrgAdmin(activeNetwork.apiKey, activeNetwork.orgId, payload);
+                await addSystemMessage(`✅ Success! Admin "${payload.email}" has been created.`, true);
+            
+            // --- CAMERAS & SENSORS ---
+            } else if (action.action === 'generate_camera_snapshot') {
+                const { serial } = payload;
+                await addSystemMessage(`Generating snapshot for camera ${serial}...`, true);
+                const data = await generateCameraSnapshot(activeNetwork.apiKey, serial);
+                if (data.url) {
+                    await handleSendMessage(`CONTEXT: A snapshot was generated. Please show this link to the user in markdown format: ${data.url}`);
+                } else {
+                    await addSystemMessage(`❌ Error generating snapshot: ${data.error || 'Unknown error'}.`, true);
+                }
+
+            } else if (action.action === 'get_motion_analytics') {
+                const { serial, timespan } = payload;
+                await addSystemMessage(`Fetching motion analytics for camera ${serial}...`, true);
+                const data = await getCameraMotionAnalytics(activeNetwork.apiKey, serial, timespan);
+                await addSystemMessage(`Found analytics data. Sending to AI...`, true);
+                await handleSendMessage(`CONTEXT: Here is the motion analytics data. Please summarize it.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+            
+            } else if (action.action === 'get_sensor_alerts') {
+                const { serial } = payload;
+                await addSystemMessage(`Fetching sensor alert settings for ${serial}...`, true);
+                const data = await getSensorAlerts(activeNetwork.apiKey, serial);
+                await addSystemMessage(`Found settings. Sending to AI...`, true);
+                await handleSendMessage(`CONTEXT: Here are the sensor alert settings. Please summarize them.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+
+            } else if (action.action === 'update_sensor_alerts') {
+                const { serial, profiles } = payload;
+                await addSystemMessage(`Executing action: Updating sensor alerts for ${serial}...`, true);
+                await updateSensorAlerts(activeNetwork.apiKey, serial, profiles);
+                await addSystemMessage(`✅ Success! Sensor alert settings have been updated.`, true);
+
+            // --- WAN & CELLULAR ---
+            } else if (action.action === 'get_cellular_status') {
+                const { serial } = payload;
+                await addSystemMessage(`Fetching cellular status for ${serial}...`, true);
+                const data = await getCellularStatus(activeNetwork.apiKey, serial);
+                await addSystemMessage(`Found status. Sending to AI...`, true);
+                await handleSendMessage(`CONTEXT: Here is the cellular status. Please summarize it.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+
+            } else if (action.action === 'get_cellular_usage_history') {
+                const { serial, timespan } = payload;
+                await addSystemMessage(`Fetching cellular usage history for ${serial}...`, true);
+                const data = await getCellularUsageHistory(activeNetwork.apiKey, serial, timespan);
+                await addSystemMessage(`Found ${data.length} data points. Sending to AI...`, true);
+                await handleSendMessage(`CONTEXT: Here is the cellular usage history. Please summarize it.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+
+            } else if (action.action === 'update_uplink_settings') {
+                const { networkId, ...settings } = payload;
+                await addSystemMessage(`Executing action: Updating uplink settings for network ${networkId}...`, true);
+                await updateApplianceUplinkSettings(activeNetwork.apiKey, networkId, settings);
+                await addSystemMessage(`✅ Success! Uplink settings have been updated.`, true);
+
+            // --- ADVANCED ANALYTICS ---
+            } else if (action.action === 'get_network_traffic') {
+                const { networkId, timespan } = payload;
+                await addSystemMessage(`Fetching network traffic analytics for network ${networkId}...`, true);
+                const data = await getNetworkTraffic(activeNetwork.apiKey, networkId, timespan);
+                await addSystemMessage(`Found traffic data. Sending to AI...`, true);
+                await handleSendMessage(`CONTEXT: Here is the network traffic data. Please summarize the top applications by usage.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+            
+            } else if (action.action === 'get_org_audit_logs') {
+                const { timespan } = payload;
+                await addSystemMessage(`Fetching organization audit logs for the last ${timespan} seconds...`, true);
+                const data = await getOrgAuditLogs(activeNetwork.apiKey, activeNetwork.orgId, timespan);
+                await addSystemMessage(`Found ${data.length} audit log entries. Sending to AI...`, true);
+                await handleSendMessage(`CONTEXT: Here are the audit logs. Please summarize the key changes.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+
+            // --- LOCATION SERVICES ---
+            } else if (action.action === 'list_floor_plans') {
+                const { networkId } = payload;
+                await addSystemMessage(`Fetching floor plans for network ${networkId}...`, true);
+                const data = await getNetworkFloorPlans(activeNetwork.apiKey, networkId);
+                await addSystemMessage(`Found ${data.length} floor plans. Sending to AI...`, true);
+                await handleSendMessage(`CONTEXT: Here are the floor plans. Please list them.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+            
+            } else if (action.action === 'update_bluetooth_settings') {
+                const { serial, ...settings } = payload;
+                await addSystemMessage(`Executing action: Updating Bluetooth settings for ${serial}...`, true);
+                await updateWirelessBluetoothSettings(activeNetwork.apiKey, serial, settings);
+                await addSystemMessage(`✅ Success! Bluetooth settings have been updated.`, true);
+
+            // --- LICENSING & COMPLIANCE ---
+            } else if (action.action === 'get_license_overview') {
+                await addSystemMessage(`Fetching license overview...`, true);
+                const data = await getOrgLicenseOverview(activeNetwork.apiKey, activeNetwork.orgId);
+                await addSystemMessage(`Found license overview. Sending to AI...`, true);
+                await handleSendMessage(`CONTEXT: Here is the license overview. Please summarize the status.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+
+            } else if (action.action === 'list_licenses') {
+                await addSystemMessage(`Fetching all licenses...`, true);
+                const data = await getOrgLicenses(activeNetwork.apiKey, activeNetwork.orgId);
+                await addSystemMessage(`Found ${data.length} licenses. Sending to AI...`, true);
+                await handleSendMessage(`CONTEXT: Here is the list of all licenses. Please summarize them, highlighting any that are expiring soon.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
+
+            // --- RCA & DIAGNOSTICS (EXISTING) ---
             } else if (action.action === 'get_device_events' || action.action === 'get_config_changes') {
                  setLoadingState('rca');
                 rcaAbortController.current = new AbortController();
@@ -515,7 +888,7 @@ const App: React.FC = () => {
                 let analysisTopic: string;
 
                 if (action.action === 'get_device_events') {
-                    const { serial } = action.payload;
+                    const { serial } = payload;
                     const device = merakiDevices.find(d => d.serial === serial);
                     analysisTopic = `event logs for device ${device?.name || serial}`;
                     await addSystemMessage(`Fetching ${analysisTopic}...`, true);
@@ -524,36 +897,28 @@ const App: React.FC = () => {
                 } else {
                     analysisTopic = `configuration changes`;
                     await addSystemMessage(`Fetching ${analysisTopic}...`, true);
-                    analysisData = await getConfigChanges(activeNetwork.apiKey, activeNetwork.orgId, action.payload?.serial, signal);
+                    analysisData = await getConfigChanges(activeNetwork.apiKey, activeNetwork.orgId, payload?.networkId, signal);
                 }
 
                 if (!analysisData || analysisData.length === 0) {
                     await addSystemMessage(`No relevant ${analysisTopic} found.`, true);
                     setLoadingState('idle');
-                    return;
+                } else {
+                    await addSystemMessage(`Found ${analysisData.length} items. Sending to AI for analysis...`, true);
+                    const analysisPrompt = `CONTEXT: Here are the ${analysisTopic} you requested. Please analyze them, provide a summary, and determine the probable root cause of the issue discussed.\n\nDATA:\n${JSON.stringify(analysisData, null, 2)}`;
+                    await handleSendMessage(analysisPrompt);
                 }
-
-                await addSystemMessage(`Found ${analysisData.length} items. Sending to AI for analysis...`, true);
-                const analysisPrompt = `CONTEXT: Here are the ${analysisTopic} you requested. Please analyze them, provide a summary, and determine the probable root cause of the issue discussed.\n\nDATA:\n${JSON.stringify(analysisData, null, 2)}`;
-                
-                await handleSendMessage(analysisPrompt);
-
 
             } else if (action.action === 'get_switch_port_stats') {
-                if (!action.payload || !action.payload.serial || !action.payload.portId) {
-                    throw new Error("Action 'get_switch_port_stats' is missing required payload parameters (serial, portId).");
-                }
                 setLoadingState('rca');
                 rcaAbortController.current = new AbortController();
-                const signal = rcaAbortController.current.signal;
-
-                const { serial, portId } = action.payload;
+                const { serial, portId } = payload;
                 const device = merakiDevices.find(d => d.serial === serial);
                 if (!device) throw new Error(`Device with serial ${serial} not found.`);
 
                 await addSystemMessage(`Fetching details and traffic stats for port(s) ${portId} on device ${device.name}...`, true);
-                const details = await getSwitchPortDetails(activeNetwork.apiKey, serial, portId, signal);
-                const statsByPort = await getSwitchPortStats(activeNetwork.apiKey, serial, portId, signal);
+                const details = await getSwitchPortDetails(activeNetwork.apiKey, serial, portId, rcaAbortController.current.signal);
+                const statsByPort = await getSwitchPortStats(activeNetwork.apiKey, serial, portId, rcaAbortController.current.signal);
 
 
                 let aggregatedStats: MerakiSwitchPortStats[] = [];
@@ -580,38 +945,40 @@ const App: React.FC = () => {
                 await handleSendMessage(analysisPrompt);
 
             } else if (action.action === 'get_site_to_site_vpn_status') {
-                setLoadingState('thinking');
                 await addSystemMessage('Fetching site-to-site VPN statuses for the organization...', true);
                 const statuses = await getOrgVpnStatuses(activeNetwork.apiKey, activeNetwork.orgId);
                 setVpnStatuses(statuses);
                 await addSystemMessage(`Found VPN status for ${statuses.length} networks. Sending to AI for summary...`, true);
-                const analysisPrompt = `CONTEXT: Here is the site-to-site VPN status information you requested. Please analyze this data and provide a concise, user-friendly summary. Mention how many networks are participating in the VPN and a high-level overview of their connection status. \n\nVPN STATUS DATA: ${JSON.stringify(statuses, null, 2)}`;
-                await handleSendMessage(analysisPrompt);
+                await handleSendMessage(`CONTEXT: Here is the site-to-site VPN status information you requested. Please analyze this data and provide a concise, user-friendly summary. Mention how many networks are participating in the VPN and a high-level overview of their connection status. \n\nVPN STATUS DATA: ${JSON.stringify(statuses, null, 2)}`);
 
             } else if (action.action === 'get_l3_firewall_rules') {
-                const { serial } = action.payload;
+                const { serial } = payload;
                 const device = merakiDevices.find(d => d.serial === serial);
                 if (!device) throw new Error(`Device with serial ${serial} not found.`);
 
-                setLoadingState('thinking');
                 await addSystemMessage(`Fetching L3 firewall rules for ${device.name}...`, true);
                 const rules = await getNetworkL3FirewallRules(activeNetwork.apiKey, device.networkId);
                 await addSystemMessage(`Found ${rules.length} rules. Sending to AI for summary...`, true);
-
-                const analysisPrompt = `CONTEXT: Here are the current L3 firewall rules for the network containing device "${device.name}". Please summarize them for the user.\n\nFIREWALL RULES:${JSON.stringify(rules, null, 2)}`;
-                await handleSendMessage(analysisPrompt);
+                await handleSendMessage(`CONTEXT: Here are the current L3 firewall rules for the network containing device "${device.name}". Please summarize them for the user.\n\nFIREWALL RULES:${JSON.stringify(rules, null, 2)}`);
             
             } else if (action.action === 'update_l3_firewall_rules') {
-                const { serial, rules } = action.payload;
+                const { serial, rules } = payload;
                 const device = merakiDevices.find(d => d.serial === serial);
                 if (!device) throw new Error(`Device with serial ${serial} not found.`);
                 
-                setLoadingState('thinking');
                 await addSystemMessage(`Executing action: Updating L3 firewall rules for network containing ${device.name}...`, true);
                 await updateNetworkL3FirewallRules(activeNetwork.apiKey, device.networkId, rules);
                 await addSystemMessage(`✅ Success! L3 firewall rules have been updated.`, true);
+            
+            } else {
+                await addSystemMessage(`⚠️ Unknown action requested by AI: '${action.action}'`, true);
+            }
+
+            // If the action was not one that spins off another AI message, stop loading.
+            if (loadingState !== 'idle' && !['get_device_events', 'get_config_changes', 'get_switch_port_stats', 'get_client_inventory'].includes(action.action) && !action.action.startsWith('list_') && !action.action.startsWith('get_')) {
                 setLoadingState('idle');
             }
+
         } catch (error) {
              if (error instanceof Error && error.name === 'AbortError') {
                 await addSystemMessage('Root Cause Analysis cancelled by user.', true);
@@ -791,6 +1158,8 @@ ${JSON.stringify(configChanges, null, 2)}
                 onOpenHelp={() => setIsHelpOpen(true)}
                 onOpenMaturity={() => setIsMaturityOpen(true)}
                 onLogout={handleLogout}
+                isDevicePanelOpen={isDevicePanelOpen}
+                onToggleDevicePanel={() => setIsDevicePanelOpen(prev => !prev)}
             />
             <div 
                 className="flex-1 flex flex-row overflow-hidden mt-4 bg-[var(--color-surface)] rounded-[var(--radius-lg)] shadow-xl animate-fade-slide-up border border-[var(--color-border-primary)]"
@@ -812,6 +1181,7 @@ ${JSON.stringify(configChanges, null, 2)}
                     </div>
                 </main>
                 <DevicePanel 
+                    isOpen={isDevicePanelOpen}
                     devices={merakiDevices}
                     merakiNetworks={merakiNetworksList}
                     vpnStatuses={vpnStatuses}
