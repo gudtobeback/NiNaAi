@@ -405,6 +405,27 @@ const App: React.FC = () => {
         }
     };
 
+    const handleClearChat = async () => {
+        if (!user || !activeNetworkId) return;
+
+        if (!window.confirm("Are you sure you want to clear the chat history for this network? This action cannot be undone.")) {
+            return;
+        }
+
+        setLoadingState('thinking');
+        try {
+            await db.clearMessages(user.id, activeNetworkId);
+            // Reloading chat history will find an empty DB, create the intro message,
+            // and update the state, effectively resetting the chat window.
+            await loadChatHistory(user.id, activeNetworkId); 
+        } catch (error) {
+            console.error("Failed to clear chat history:", error);
+            addSystemMessage("❌ Error: Could not clear chat history.", true);
+        } finally {
+            setLoadingState('idle');
+        }
+    };
+
     // --- Chat & Action Logic ---
     const handleSendMessage = async (text: string, isFromWebex = false, personEmail?: string) => {
         if (!activeNetworkId || !user) return;
@@ -480,8 +501,8 @@ const App: React.FC = () => {
             }
 
             const match = finalResponseText.match(/<execute_action>([\s\S]*?)<\/execute_action>/);
-            if (match) {
-                await handleFrontendAction(finalResponseText);
+            if (match && match[1]) {
+                await handleFrontendAction(match[1].trim());
             } else {
                 setLoadingState('idle');
             }
@@ -492,17 +513,15 @@ const App: React.FC = () => {
         }
     };
 
-    const handleFrontendAction = async (aiResponse: string) => {
+    const handleFrontendAction = async (actionJson: string) => {
         if (!user || !activeNetworkId || isExecutingAction.current) {
             if(isExecutingAction.current) console.warn("Action already in progress. Ignoring duplicate call.");
             return;
         }
 
         isExecutingAction.current = true;
-
-        const actionRegex = /<execute_action>([\s\S]*?)<\/execute_action>/;
-        const match = aiResponse.match(actionRegex);
-        if (!match || !match[1]) {
+        
+        if (!actionJson) {
              isExecutingAction.current = false;
              return;
         }
@@ -515,8 +534,10 @@ const App: React.FC = () => {
         }
         
         try {
-            const action = JSON.parse(match[1]);
-            const { payload } = action;
+            const action = JSON.parse(actionJson);
+            // Use the payload if it exists, otherwise use the action object itself.
+            // This provides a fallback for when the AI forgets to nest arguments.
+            const payload = action.payload || action;
 
             // --- Start of action handling ---
             setLoadingState('thinking'); // Default to thinking, can be overridden
@@ -975,7 +996,11 @@ const App: React.FC = () => {
             }
 
             // If the action was not one that spins off another AI message, stop loading.
-            if (loadingState !== 'idle' && !['get_device_events', 'get_config_changes', 'get_switch_port_stats', 'get_client_inventory'].includes(action.action) && !action.action.startsWith('list_') && !action.action.startsWith('get_')) {
+            const isChainedAction = ['get_device_events', 'get_config_changes', 'get_switch_port_stats', 'get_client_inventory'].includes(action.action)
+                || action.action.startsWith('list_')
+                || action.action.startsWith('get_');
+            
+            if (!isChainedAction) {
                 setLoadingState('idle');
             }
 
@@ -1160,6 +1185,7 @@ ${JSON.stringify(configChanges, null, 2)}
                 onLogout={handleLogout}
                 isDevicePanelOpen={isDevicePanelOpen}
                 onToggleDevicePanel={() => setIsDevicePanelOpen(prev => !prev)}
+                onClearChat={handleClearChat}
             />
             <div 
                 className="flex-1 flex flex-row overflow-hidden mt-4 bg-[var(--color-surface)] rounded-[var(--radius-lg)] shadow-xl animate-fade-slide-up border border-[var(--color-border-primary)]"

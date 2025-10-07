@@ -218,19 +218,35 @@ Your value is in providing specific, actionable, and data-backed insights. Use h
 
 
 const formatHistory = (history: ChatMessage[]): Content[] => {
-    return history.filter(m => !m.id.startsWith('ai-intro-') && m.sender !== Sender.System).map(message => {
-        const isUserRole = message.sender === Sender.User || message.sender === Sender.Webex;
-        const role = isUserRole ? 'user' : 'model';
-        
-        const text = message.sender === Sender.Webex && message.personEmail
-            ? `(Message from Webex user: ${message.personEmail})\n${message.text}`
-            : message.text;
+    return history
+        .filter(m => !m.id.startsWith('ai-intro-') && m.sender !== Sender.System)
+        .map(message => {
+            const isUserRole = message.sender === Sender.User || message.sender === Sender.Webex;
+            const role = isUserRole ? 'user' : 'model';
+            
+            let text = message.text;
 
-        return {
-            role,
-            parts: [{ text }] as Part[],
-        };
-    });
+            // If the message is from the AI, strip out the action tag for the history.
+            // The AI should not see its own past commands, only its conversational responses.
+            if (message.sender === Sender.AI) {
+                text = text.replace(/<execute_action>[\s\S]*?<\/execute_action>/g, '').trim();
+            }
+
+            if (message.sender === Sender.Webex && message.personEmail) {
+                text = `(Message from Webex user: ${message.personEmail})\n${text}`;
+            }
+
+            // Don't add empty messages to the history for the model
+            if (!text) {
+                return null;
+            }
+
+            return {
+                role,
+                parts: [{ text }] as Part[],
+            };
+        })
+        .filter(Boolean) as Content[]; // Filter out any null messages
 };
 
 export const getAiResponse = async (

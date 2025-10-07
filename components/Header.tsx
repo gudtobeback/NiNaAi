@@ -13,6 +13,7 @@ interface HeaderProps {
     onLogout: () => void;
     isDevicePanelOpen: boolean;
     onToggleDevicePanel: () => void;
+    onClearChat: () => void;
 }
 
 const HeaderButton: React.FC<{onClick: () => void, 'aria-label': string, children: React.ReactNode}> = ({ onClick, 'aria-label': ariaLabel, children }) => (
@@ -25,7 +26,7 @@ const HeaderButton: React.FC<{onClick: () => void, 'aria-label': string, childre
     </button>
 );
 
-const Header: React.FC<HeaderProps> = ({ user, networks, activeNetworkId, onNetworkSelect, onOpenSettings, onOpenHelp, onOpenMaturity, onLogout, isDevicePanelOpen, onToggleDevicePanel }) => {
+const Header: React.FC<HeaderProps> = ({ user, networks, activeNetworkId, onNetworkSelect, onOpenSettings, onOpenHelp, onOpenMaturity, onLogout, isDevicePanelOpen, onToggleDevicePanel, onClearChat }) => {
   return (
     <header className="bg-[var(--color-surface)] p-2.5 rounded-[var(--radius-lg)] shadow-md z-10 w-full max-w-7xl mx-auto animate-fade-slide-up border border-[var(--color-border-primary)]">
       <div className="flex items-center justify-between">
@@ -42,6 +43,11 @@ const Header: React.FC<HeaderProps> = ({ user, networks, activeNetworkId, onNetw
                 onSelect={onNetworkSelect}
                 onOpenSettings={onOpenSettings}
             />
+            <HeaderButton onClick={onClearChat} aria-label="Clear chat and start new session">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+            </HeaderButton>
             <HeaderButton onClick={onOpenMaturity} aria-label="Open AIOps Maturity Model">
                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                   <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />

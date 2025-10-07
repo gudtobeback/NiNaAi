@@ -191,3 +191,37 @@ export const getMessages = (userId: number, networkId: number): Promise<ChatMess
         request.onerror = () => reject(request.error);
     });
 };
+
+export const clearMessages = (userId: number, networkId: number): Promise<void> => {
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(['chatMessages'], 'readwrite');
+        const store = transaction.objectStore('chatMessages');
+        const index = store.index('user_network_idx');
+        
+        // 1. Get all primary keys for messages matching the user and network
+        const getKeysReq = index.getAllKeys(IDBKeyRange.only([userId, networkId]));
+
+        getKeysReq.onsuccess = () => {
+            const keys = getKeysReq.result;
+            if (keys && keys.length > 0) {
+                // 2. For each key, issue a delete request
+                keys.forEach(key => {
+                    store.delete(key);
+                });
+            }
+        };
+
+        getKeysReq.onerror = (event) => {
+            reject((event.target as IDBRequest).error);
+        };
+
+        // 3. The promise resolves when the transaction completes successfully
+        transaction.oncomplete = () => {
+            resolve();
+        };
+
+        transaction.onerror = (event) => {
+            reject((event.target as IDBTransaction).error);
+        };
+    });
+};
