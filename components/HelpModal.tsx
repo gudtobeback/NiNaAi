@@ -136,15 +136,16 @@ const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
                     </ul>
                 </div>
                  <div>
-                    <h4 className="font-semibold text-[var(--color-primary)]">7. Security, Cameras, Sensors & More</h4>
+                    <h4 className="font-semibold text-[var(--color-text-primary)]">7. Security, Cameras, Sensors & More</h4>
                      <ul className="list-disc list-inside pl-2 mt-1 space-y-2">
                          <li>
                             <strong>Admin Management:</strong> Add, view, or remove administrators from your organization.
                             <p className="pl-4"><code className="bg-black/5 text-[var(--color-primary)] px-1.5 py-0.5 rounded-md text-xs font-mono">"List all admins"</code> or <code className="bg-black/5 text-[var(--color-primary)] px-1.5 py-0.5 rounded-md text-xs font-mono">"Add jane@example.com as a read-only admin."</code></p>
                         </li>
                          <li>
-                            <strong>Camera Snapshots:</strong> Instantly get a snapshot from any MV camera.
+                            <strong>Camera Snapshots & Recordings:</strong> Instantly get a snapshot or a video recording link from any MV camera.
                             <p className="pl-4"><code className="bg-black/5 text-[var(--color-primary)] px-1.5 py-0.5 rounded-md text-xs font-mono">"Show me a snapshot from the LobbyCam."</code></p>
+                            <p className="pl-4"><code className="bg-black/5 text-[var(--color-primary)] px-1.5 py-0.5 rounded-md text-xs font-mono">"Get the recording from the front door camera from 10am today."</code></p>
                         </li>
                          <li>
                             <strong>Sensor Alerts:</strong> Configure alerts for your MT environmental sensors.

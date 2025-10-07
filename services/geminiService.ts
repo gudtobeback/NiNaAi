@@ -163,45 +163,47 @@ Actions are commands you can issue. To issue an action, respond ONLY with a JSON
 ---
 47. **Generate Camera Snapshot**: Generates a snapshot URL from a camera.
     - Action: \`"action": "generate_camera_snapshot"\`, Payload: \`{ "serial": "Q2MV-ABCD-1234" }\`
-48. **Get Motion Analytics**: Fetches motion analytics data for a camera.
+48. **Get Camera Recording**: Generates a video recording link for a camera starting at a specific time. You MUST parse user-provided times (e.g., "yesterday at 5pm", "today at 11:40am") into a full ISO 8601 UTC timestamp format (YYYY-MM-DDTHH:MM:SSZ). Use the start time of any requested range.
+    - Action: \`"action": "get_camera_recording"\`, Payload: \`{ "serial": "Q2MV-ABCD-1234", "timestamp": "2023-10-27T11:40:00Z" }\`
+49. **Get Motion Analytics**: Fetches motion analytics data for a camera.
     - Action: \`"action": "get_motion_analytics"\`, Payload: \`{ "serial": "Q2MV-ABCD-1234", "timespan": 3600 }\`
-49. **Get Sensor Alerts**: Retrieves alert settings for an MT sensor.
+50. **Get Sensor Alerts**: Retrieves alert settings for an MT sensor.
     - Action: \`"action": "get_sensor_alerts"\`, Payload: \`{ "serial": "Q2MT-ABCD-1234" }\`
-50. **Update Sensor Alerts**: Updates alert thresholds for an MT sensor.
+51. **Update Sensor Alerts**: Updates alert thresholds for an MT sensor.
     - Action: \`"action": "update_sensor_alerts"\`, Payload: \`{ "serial": "Q2MT-ABCD-1234", "profiles": [{"metric": "temperature", "threshold": {"above": 28}, "recipients": ["ops@example.com"]}] }\`
 
 ---
 **GROUP 9: WAN & Cellular (MG)**
 ---
-51. **Get Cellular Status**: Retrieves the status of a cellular gateway.
+52. **Get Cellular Status**: Retrieves the status of a cellular gateway.
     - Action: \`"action": "get_cellular_status"\`, Payload: \`{ "serial": "Q2MG-ABCD-1234" }\`
-52. **Get Cellular Usage History**: Retrieves data usage history for a cellular gateway.
+53. **Get Cellular Usage History**: Retrieves data usage history for a cellular gateway.
     - Action: \`"action": "get_cellular_usage_history"\`, Payload: \`{ "serial": "Q2MG-ABCD-1234", "timespan": 2592000 }\`
-53. **Update Uplink Settings (Failover)**: Configures WAN failover policies.
+54. **Update Uplink Settings (Failover)**: Configures WAN failover policies.
     - Action: \`"action": "update_uplink_settings"\`, Payload: \`{ "networkId": "L_456", "interfaces": { "wan1": {"enabled": true, "uplinkSelection": {"failoverCriterion": "poorPerformance"}}, "cellular": {"enabled": true, "uplinkSelection": {"failoverCriterion": "uplinkDown"}}} }\`
 
 ---
 **GROUP 10: Advanced Analytics & Reporting**
 ---
-54. **Get Network Traffic**: Retrieves application usage and top talkers for a network.
+55. **Get Network Traffic**: Retrieves application usage and top talkers for a network.
     - Action: \`"action": "get_network_traffic"\`, Payload: \`{ "networkId": "L_123", "timespan": 604800 }\`
-55. **Get Organization Audit Logs**: Retrieves the detailed audit log for the org.
+56. **Get Organization Audit Logs**: Retrieves the detailed audit log for the org.
     - Action: \`"action": "get_org_audit_logs"\`, Payload: \`{ "timespan": 86400 }\`
 
 ---
 **GROUP 11: Location Services**
 ---
-56. **List Floor Plans**: Fetches floor plans for a network.
+57. **List Floor Plans**: Fetches floor plans for a network.
     - Action: \`"action": "list_floor_plans"\`, Payload: \`{ "networkId": "L_123" }\`
-57. **Update Bluetooth Settings**: Enables/disables BLE scanning on an AP.
+58. **Update Bluetooth Settings**: Enables/disables BLE scanning on an AP.
     - Action: \`"action": "update_bluetooth_settings"\`, Payload: \`{ "serial": "Q2MR-ABCD-5678", "scanningEnabled": true }\`
 
 ---
 **GROUP 12: Licensing & Compliance**
 ---
-58. **Get License Overview**: Retrieves a high-level overview of the organization's licensing status.
+59. **Get License Overview**: Retrieves a high-level overview of the organization's licensing status.
     - Action: \`"action": "get_license_overview"\`, Payload: \`{}\`
-59. **List Licenses**: Fetches a detailed list of all licenses in the organization.
+60. **List Licenses**: Fetches a detailed list of all licenses in the organization.
     - Action: \`"action": "list_licenses"\`, Payload: \`{}\`
 
 
@@ -217,11 +219,20 @@ Your value is in providing specific, actionable, and data-backed insights. Use h
 };
 
 
+const RECENT_MESSAGES_LIMIT = 30; // Keep the last 15 pairs of user/AI messages
+
 const formatHistory = (history: ChatMessage[]): Content[] => {
-    return history
-        .filter(m => !m.id.startsWith('ai-intro-') && m.sender !== Sender.System)
+    const filteredHistory = history
+        .filter(m => !m.id.startsWith('ai-intro-'));
+
+    // If history is too long, truncate it to the most recent messages to avoid API token limits
+    const truncatedHistory = filteredHistory.length > RECENT_MESSAGES_LIMIT
+        ? filteredHistory.slice(filteredHistory.length - RECENT_MESSAGES_LIMIT)
+        : filteredHistory;
+
+    return truncatedHistory
         .map(message => {
-            const isUserRole = message.sender === Sender.User || message.sender === Sender.Webex;
+            const isUserRole = message.sender === Sender.User || message.sender === Sender.Webex || message.sender === Sender.System;
             const role = isUserRole ? 'user' : 'model';
             
             let text = message.text;
@@ -234,6 +245,10 @@ const formatHistory = (history: ChatMessage[]): Content[] => {
 
             if (message.sender === Sender.Webex && message.personEmail) {
                 text = `(Message from Webex user: ${message.personEmail})\n${text}`;
+            }
+
+            if (message.sender === Sender.System) {
+                text = `OBSERVATION: ${text}`;
             }
 
             // Don't add empty messages to the history for the model
@@ -310,7 +325,6 @@ export const getAiResponse = async (
         if (onChunk) {
             onChunk(fullErrorText);
         }
-        // FIX: 'fullText' is not defined in this scope. Return the generated error message instead.
         return fullErrorText;
     }
 };

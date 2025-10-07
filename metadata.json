@@ -1,5 +1,5 @@
 {
-  "name": "NetOps AI Assistant",
+  "name": "Copy of NetOps AI Assistant",
   "description": "An AI-powered assistant for managing network devices, now featuring a client-server architecture to enable bi-directional chat with Webex. This application allows users to interact with a chat-based AI to perform network operations, such as changing switch port VLANs on Meraki devices. The backend server handles AI communication and Webex integration, while the frontend provides the user interface.",
   "requestFramePermissions": []
 }

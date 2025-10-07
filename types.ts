@@ -13,6 +13,9 @@ export interface ChatMessage {
   userId?: number;
   networkId?: number;
   personEmail?: string; // For Webex messages
+  imageUrl?: string;
+  videoUrl?: string;
+  originalVideoUrl?: string;
 }
 
 export interface MerakiOrganization {

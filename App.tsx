@@ -17,7 +17,8 @@ import {
     getOrgConfigTemplates, bindNetworkToTemplate, getOrgAdmins, createOrgAdmin, updateOrgAdmin, deleteOrgAdmin,
     generateCameraSnapshot, getCameraMotionAnalytics, getSensorAlerts, updateSensorAlerts, getCellularStatus,
     getCellularUsageHistory, updateApplianceUplinkSettings, getNetworkTraffic, getOrgAuditLogs, getNetworkFloorPlans,
-    updateWirelessBluetoothSettings, getOrgLicenseOverview, getOrgLicenses
+    updateWirelessBluetoothSettings, getOrgLicenseOverview, getOrgLicenses, getOrgDeviceStatuses, getCameraVideoLink,
+    fetchProxiedUrlAsBlob
 } from './services/merakiService';
 
 import LoginScreen from './components/LoginScreen';
@@ -199,7 +200,7 @@ const App: React.FC = () => {
                     if (loadingState === 'idle' && !isSettingsOpen && webexPollCallback.current) {
                         webexPollCallback.current();
                     }
-                }, 7000);
+                }, 15000); // Increased polling interval to 15s to avoid rate-limiting
 
             } else {
                 setMessages([]);
@@ -353,9 +354,13 @@ const App: React.FC = () => {
             setVpnStatuses(statuses);
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
-            console.error(`Error fetching VPN statuses: ${errorMessage}`);
-            await addSystemMessage(`Error fetching VPN statuses: ${errorMessage}`, true);
-            setVpnStatuses(null);
+            if (errorMessage.includes('404')) {
+                console.warn(`VPN status endpoint not available for org ${activeNetwork.orgId}. This is expected for some organizations and can be ignored.`);
+                setVpnStatuses(null); // Ensure VPN status is cleared on error
+            } else {
+                await addSystemMessage(`Error fetching VPN statuses: ${errorMessage}`, true);
+                setVpnStatuses(null);
+            }
         }
     };
 
@@ -499,13 +504,21 @@ const App: React.FC = () => {
                     await sendWebexMessage(activeNetwork.webexBotToken, activeNetwork.webexSpaceId, webexResponse);
                 }
             }
+            
+            const actionRegex = /<execute_action>([\s\S]*?)<\/execute_action>/g;
+            const actionMatches = [...finalResponseText.matchAll(actionRegex)];
 
-            const match = finalResponseText.match(/<execute_action>([\s\S]*?)<\/execute_action>/);
-            if (match && match[1]) {
-                await handleFrontendAction(match[1].trim());
+            if (actionMatches.length > 0) {
+                for (const match of actionMatches) {
+                    const actionJson = match[1]?.trim();
+                    if (actionJson) {
+                         await handleFrontendAction(actionJson);
+                    }
+                }
             } else {
                 setLoadingState('idle');
             }
+
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
             await addSystemMessage(`Error communicating with AI: ${errorMessage}`, true);
@@ -808,12 +821,81 @@ const App: React.FC = () => {
             // --- CAMERAS & SENSORS ---
             } else if (action.action === 'generate_camera_snapshot') {
                 const { serial } = payload;
-                await addSystemMessage(`Generating snapshot for camera ${serial}...`, true);
+                const device = merakiDevices.find(d => d.serial === serial);
+                const cameraName = device ? device.name : serial;
+
+                await addSystemMessage(`Generating snapshot for camera ${cameraName}...`, true);
                 const data = await generateCameraSnapshot(activeNetwork.apiKey, serial);
-                if (data.url) {
-                    await handleSendMessage(`CONTEXT: A snapshot was generated. Please show this link to the user in markdown format: ${data.url}`);
+                
+                if (data.url && user && activeNetworkId) {
+                    await addSystemMessage(`Snapshot link generated. The image will be ready in about 5 seconds...`, true);
+
+                    // Wait 5 seconds for the snapshot URL to become active before displaying the image
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+
+                    const aiMessage: ChatMessage = {
+                        id: `ai-snapshot-${Date.now()}`,
+                        sender: Sender.AI,
+                        text: `Here is the snapshot from **${cameraName}**.\n\nThis provides real-time visibility into your camera feeds, which aligns with Level 2: Active Ops by enabling proactive monitoring.`,
+                        imageUrl: data.url,
+                        timestamp: new Date().toLocaleTimeString(),
+                        userId: user.id,
+                        networkId: activeNetworkId,
+                    };
+                    
+                    setMessages(prev => [...prev, aiMessage]);
+                    await db.addMessage(aiMessage);
+
+                    // Send to Webex with markdown image format
+                    if (activeNetwork.webexVerified && activeNetwork.webexBotToken && activeNetwork.webexSpaceId) {
+                        const webexMessage = `**[From AI]:**\n\nHere is the snapshot from **${cameraName}**:\n\n![Snapshot from ${cameraName}](${data.url})`;
+                        await sendWebexMessage(activeNetwork.webexBotToken, activeNetwork.webexSpaceId, webexMessage);
+                    }
                 } else {
                     await addSystemMessage(`❌ Error generating snapshot: ${data.error || 'Unknown error'}.`, true);
+                }
+
+            } else if (action.action === 'get_camera_recording') {
+                const { serial, timestamp } = payload;
+                const device = merakiDevices.find(d => d.serial === serial);
+                const cameraName = device ? device.name : serial;
+            
+                await addSystemMessage(`Generating video link for camera ${cameraName} starting at ${new Date(timestamp).toLocaleString()}...`, true);
+            
+                const data = await getCameraVideoLink(activeNetwork.apiKey, serial, timestamp);
+                
+                if (data.url && user && activeNetworkId) {
+                    await addSystemMessage(`Video link generated. Fetching video data to bypass CORS... This may take a moment.`, true);
+                    
+                    try {
+                        const videoBlob = await fetchProxiedUrlAsBlob(data.url);
+                        const videoObjectUrl = URL.createObjectURL(videoBlob);
+
+                        const aiMessage: ChatMessage = {
+                            id: `ai-video-${Date.now()}`,
+                            sender: Sender.AI,
+                            text: `Here is the requested video recording from **${cameraName}**.\n\nThis provides historical visibility, aligning with Level 2: Active Ops for incident investigation.`,
+                            videoUrl: videoObjectUrl,
+                            originalVideoUrl: data.url,
+                            timestamp: new Date().toLocaleTimeString(),
+                            userId: user.id,
+                            networkId: activeNetworkId,
+                        };
+                        
+                        setMessages(prev => [...prev, aiMessage]);
+                        await db.addMessage(aiMessage);
+                
+                        // Send a simple link to Webex as video embedding is not reliable.
+                        if (activeNetwork.webexVerified && activeNetwork.webexBotToken && activeNetwork.webexSpaceId) {
+                            const webexMessage = `**[From AI]:**\n\nHere is the video link for **${cameraName}**: ${data.url}`;
+                            await sendWebexMessage(activeNetwork.webexBotToken, activeNetwork.webexSpaceId, webexMessage);
+                        }
+                    } catch (videoError) {
+                         const errorMessage = videoError instanceof Error ? videoError.message : "Unknown error";
+                         await addSystemMessage(`❌ Error fetching video data: ${errorMessage}. The link may be invalid or expired. Link: ${data.url}`, true);
+                    }
+                } else {
+                    await addSystemMessage(`❌ Error generating video link: No URL was returned.`, true);
                 }
 
             } else if (action.action === 'get_motion_analytics') {
@@ -825,15 +907,19 @@ const App: React.FC = () => {
             
             } else if (action.action === 'get_sensor_alerts') {
                 const { serial } = payload;
+                const device = merakiDevices.find(d => d.serial === serial);
+                if (!device) throw new Error(`Device with serial ${serial} not found.`);
                 await addSystemMessage(`Fetching sensor alert settings for ${serial}...`, true);
-                const data = await getSensorAlerts(activeNetwork.apiKey, serial);
+                const data = await getSensorAlerts(activeNetwork.apiKey, device.networkId);
                 await addSystemMessage(`Found settings. Sending to AI...`, true);
                 await handleSendMessage(`CONTEXT: Here are the sensor alert settings. Please summarize them.\n\nDATA: ${JSON.stringify(data, null, 2)}`);
 
             } else if (action.action === 'update_sensor_alerts') {
                 const { serial, profiles } = payload;
+                const device = merakiDevices.find(d => d.serial === serial);
+                if (!device) throw new Error(`Device with serial ${serial} not found.`);
                 await addSystemMessage(`Executing action: Updating sensor alerts for ${serial}...`, true);
-                await updateSensorAlerts(activeNetwork.apiKey, serial, profiles);
+                await updateSensorAlerts(activeNetwork.apiKey, device.networkId, profiles);
                 await addSystemMessage(`✅ Success! Sensor alert settings have been updated.`, true);
 
             // --- WAN & CELLULAR ---
@@ -996,9 +1082,14 @@ const App: React.FC = () => {
             }
 
             // If the action was not one that spins off another AI message, stop loading.
-            const isChainedAction = ['get_device_events', 'get_config_changes', 'get_switch_port_stats', 'get_client_inventory'].includes(action.action)
+            // Some 'get' actions are terminal (like getting an image/video) and don't chain to another AI call.
+            const isTerminalGetAction = ['generate_camera_snapshot', 'get_camera_recording'].includes(action.action);
+
+            const isChainedAction = !isTerminalGetAction && (
+                ['get_device_events', 'get_config_changes', 'get_switch_port_stats', 'get_client_inventory'].includes(action.action)
                 || action.action.startsWith('list_')
-                || action.action.startsWith('get_');
+                || action.action.startsWith('get_')
+            );
             
             if (!isChainedAction) {
                 setLoadingState('idle');
@@ -1124,15 +1215,26 @@ ${JSON.stringify(configChanges, null, 2)}
         if (!activeNetwork || !user || merakiDevices.length === 0) return;
     
         try {
-            const currentDevices = await getOrgDevices(activeNetwork.apiKey, activeNetwork.orgId);
-            const previousDeviceStatus = new Map(merakiDevices.map(d => [d.serial, d.status]));
+            const currentStatuses = await getOrgDeviceStatuses(activeNetwork.apiKey, activeNetwork.orgId);
+            if (!currentStatuses || currentStatuses.length === 0) return;
+
+            const statusMap = new Map<string, string>(currentStatuses.map((s: any) => [s.serial, s.status]));
             
-            const newlyProblematicDevices = currentDevices.filter(d => {
-                const oldStatus = previousDeviceStatus.get(d.serial);
-                return (d.status === 'offline' || d.status === 'alerting') && oldStatus === 'online';
+            const newlyProblematicDevices: MerakiDevice[] = [];
+            const updatedDevices = merakiDevices.map(d => {
+                const newStatus = statusMap.get(d.serial);
+                const hasChanged = newStatus && d.status !== newStatus;
+
+                if (d.status === 'online' && hasChanged && (newStatus === 'offline' || newStatus === 'alerting')) {
+                    const updatedDevice = { ...d, status: newStatus };
+                    newlyProblematicDevices.push(updatedDevice);
+                    return updatedDevice;
+                }
+                
+                return hasChanged ? { ...d, status: newStatus! } : d;
             });
             
-            setMerakiDevices(currentDevices);
+            setMerakiDevices(updatedDevices);
     
             for (const device of newlyProblematicDevices) {
                 await triggerRcaForDevice(device);

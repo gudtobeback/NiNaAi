@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ChatMessage, Sender } from '../types';
 
 // New, robust line-by-line markdown parser
@@ -138,6 +138,34 @@ const MarkdownRenderer: React.FC<{ text: string }> = ({ text }) => {
 const Message: React.FC<{ message: ChatMessage }> = ({ message }) => {
   const isUser = message.sender === Sender.User;
   const isSystem = message.sender === Sender.System;
+  const videoRef = useRef<HTMLVideoElement>(null);
+  
+  useEffect(() => {
+    // This effect handles the lifecycle of blob URLs to prevent memory leaks.
+    const videoUrl = message.videoUrl;
+
+    // The cleanup function will be called when the component unmounts
+    // or when the videoUrl dependency changes.
+    return () => {
+      if (videoUrl && videoUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(videoUrl);
+      }
+    };
+  }, [message.videoUrl]); // Re-run effect if videoUrl changes
+
+  useEffect(() => {
+    // This effect attempts to play the video as soon as the component mounts
+    // and the videoRef is attached to the element.
+    if (videoRef.current) {
+        // Muting is often required for autoplay to work in modern browsers.
+        videoRef.current.muted = true; 
+        videoRef.current.play().catch(error => {
+            // This error is expected if the browser blocks autoplay.
+            // The user can still use the controls to play the video manually.
+            console.warn("Video autoplay was prevented by the browser:", error);
+        });
+    }
+  }, [message.videoUrl]);
 
   if (isSystem) {
     return (
@@ -178,11 +206,55 @@ const Message: React.FC<{ message: ChatMessage }> = ({ message }) => {
       break;
   }
 
+  const imageContent = message.imageUrl ? (
+    <div className="mt-3">
+        <a href={message.imageUrl} target="_blank" rel="noopener noreferrer" className="block" aria-label="View full size camera snapshot">
+            <img 
+                src={message.imageUrl} 
+                alt="Camera snapshot" 
+                className="rounded-lg max-w-sm w-full h-auto object-cover border-2 border-white/50 shadow-lg transition-transform duration-200 ease-in-out hover:scale-[1.03] cursor-pointer"
+            />
+        </a>
+    </div>
+  ) : null;
+
+  const videoContent = message.videoUrl ? (
+    <div className="mt-3">
+        <video 
+            ref={videoRef}
+            src={message.videoUrl} 
+            controls 
+            autoPlay
+            playsInline
+            muted
+            className="rounded-lg max-w-sm w-full h-auto object-cover border-2 border-white/50 shadow-lg"
+            aria-label="Camera recording"
+        >
+            Your browser does not support the video tag.
+        </video>
+        {message.originalVideoUrl && (
+            <div className="text-right mt-1.5">
+              <a 
+                href={message.originalVideoUrl} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-xs text-[var(--color-primary)] hover:underline transition-colors"
+                title="Open video in new tab"
+              >
+                Not playing? Open in new tab.
+              </a>
+            </div>
+        )}
+    </div>
+  ) : null;
+
   return (
     <div className={containerClasses}>
       <div className={bubbleClasses}>
         {senderInfo}
         {message.sender === Sender.AI ? <MarkdownRenderer text={message.text} /> : <p className={`whitespace-pre-wrap ${isUser ? 'text-white' : ''}`}>{message.text}</p>}
+        {imageContent}
+        {videoContent}
         <p className={`text-xs mt-2 text-right ${timestampClasses}`}>{message.timestamp}</p>
       </div>
     </div>
